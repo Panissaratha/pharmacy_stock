@@ -14,7 +14,7 @@ from utils.sheets import (
     load_recent_counts,
 )
 
-st.set_page_config(page_title="นับสต็อกร้านยา", page_icon="💊", layout="centered")
+st.set_page_config(page_title="นับสต็อก", page_icon="💊", layout="centered")
 
 if not auth.is_logged_in():
     auth.login_form()
@@ -31,7 +31,7 @@ with st.sidebar:
         load_master_data.clear()
         st.success("อัพเดตข้อมูลยาแล้ว")
 
-st.title("💊 นับสต็อกร้านขายยา")
+st.title("💊 นับสต็อก")
 
 try:
     master_df = load_master_data()
