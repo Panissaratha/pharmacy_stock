@@ -3,6 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from utils import auth
+from utils.barcode_scanner import barcode_camera_scanner
 from utils.sheets import (
     MASTER_COLUMNS,
     SheetNotConfiguredError,
@@ -66,6 +67,34 @@ if scan_submit and barcode_input.strip():
     else:
         st.session_state.matches = matches
         st.session_state.scanned_barcode = barcode_input.strip()
+
+
+def _handle_camera_scan() -> None:
+    result = st.session_state.get("camera_scanner")
+    barcode = getattr(result, "scanned", None) if result is not None else None
+    if not barcode:
+        return
+    try:
+        df = load_master_data()
+    except Exception:  # noqa: BLE001
+        st.session_state.camera_scan_error = "โหลดข้อมูลยาไม่สำเร็จ กรุณาลองใหม่"
+        return
+    found = find_by_barcode(df, barcode)
+    if found.empty:
+        st.session_state.matches = None
+        st.session_state.camera_scan_error = f"ไม่พบยาที่มีบาร์โค้ด: {barcode}"
+    else:
+        st.session_state.matches = found
+        st.session_state.scanned_barcode = barcode.strip()
+        st.session_state.camera_scan_error = None
+        st.session_state["barcode_field"] = barcode.strip()
+
+
+st.caption("หรือ")
+barcode_camera_scanner(key="camera_scanner", on_scanned_change=_handle_camera_scan)
+if st.session_state.get("camera_scan_error"):
+    st.error(st.session_state.camera_scan_error)
+    st.session_state.camera_scan_error = None
 
 # ให้เคอร์เซอร์กลับไปที่ช่องบาร์โค้ดอัตโนมัติ เพื่อสแกนชิ้นถัดไปได้ทันที
 st.html(
