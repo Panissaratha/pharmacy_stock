@@ -76,11 +76,23 @@ def _log_worksheet_name() -> str:
     return _get_secret_section("sheet").get("log_worksheet", "CountLog")
 
 
+def _get_all_records_as_str(ws) -> list[dict]:
+    # gspread's get_all_records() numericises any column that "looks like a
+    # number" based purely on the cell's string content — it ignores the
+    # cell's declared number format entirely. That silently strips leading
+    # zeros from codes like "003265" (int("003265") == 3265). Passing every
+    # column index in numericise_ignore disables that conversion so codes
+    # round-trip exactly as typed.
+    headers = ws.row_values(1)
+    numericise_ignore = list(range(1, len(headers) + 1))
+    return ws.get_all_records(numericise_ignore=numericise_ignore)
+
+
 @st.cache_data(ttl=60, show_spinner="กำลังโหลดข้อมูลยาจาก Google Sheet...")
 def load_master_data() -> pd.DataFrame:
     ss = _get_spreadsheet()
     ws = ss.worksheet(_master_worksheet_name())
-    records = ws.get_all_records()
+    records = _get_all_records_as_str(ws)
     df = pd.DataFrame(records)
     if not df.empty:
         # gspread auto-converts all-numeric cells (e.g. รหัสสินค้า, เลขที่ล็อต)
@@ -112,7 +124,7 @@ def _ensure_log_worksheet(ss):
 def load_all_counts() -> pd.DataFrame:
     ss = _get_spreadsheet()
     ws = _ensure_log_worksheet(ss)
-    records = ws.get_all_records()
+    records = _get_all_records_as_str(ws)
     return pd.DataFrame(records)
 
 
@@ -141,7 +153,7 @@ def find_latest_count(df: pd.DataFrame, barcode: str, lot: str) -> dict | None:
 
 def _find_row_number(ws, barcode: str, lot: str) -> int | None:
     """Return the 1-based sheet row number of the last matching entry, if any."""
-    records = ws.get_all_records()
+    records = _get_all_records_as_str(ws)
     row_number = None
     for i, record in enumerate(records):
         if (
