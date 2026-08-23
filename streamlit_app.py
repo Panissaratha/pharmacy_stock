@@ -114,8 +114,6 @@ with st.container(border=True):
         else:
             st.session_state.matches = matches
 
-    st.divider()
-
     # st.selectbox กรอง option ให้เองแบบ live ตอนพิมพ์อยู่แล้ว (ในตัว widget เดียว)
     # จึงไม่ต้องมีช่องพิมพ์คำค้นหาแยกกับ dropdown แสดงผลอีกอัน
     name_options = list_drug_names(master_df)
@@ -128,8 +126,6 @@ with st.container(border=True):
         on_change=_handle_name_select,
         disabled=not name_options,
     )
-
-    st.divider()
 
     barcode_camera_scanner(key="camera_scanner", on_scanned_change=_handle_camera_scan)
 
