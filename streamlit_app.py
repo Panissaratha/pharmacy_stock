@@ -250,7 +250,21 @@ if matches is not None and not matches.empty:
 
     st.divider()
 
-    with st.expander("➕ เพิ่มล็อตใหม่ (ถ้าไม่มีเลขล็อตนี้ในรายการ)"):
+    st.html(
+        """
+        <style>
+        .st-key-new_lot_expander summary {
+          background-color: #fff3cd;
+        }
+        .st-key-new_lot_expander summary:hover {
+          background-color: #ffecb0;
+        }
+        </style>
+        """
+    )
+    with st.expander(
+        "➕ เพิ่มล็อตใหม่ (ถ้าไม่มีเลขล็อตนี้ในรายการ)", key="new_lot_expander"
+    ):
         new_lot_key = f"new_lot_input_{actual_barcode}"
         new_expiry_key = f"new_expiry_input_{actual_barcode}"
         new_lot = st.text_input("เลขที่ล็อต", key=new_lot_key)
@@ -287,19 +301,17 @@ if matches is not None and not matches.empty:
                     st.error(f"บันทึกไม่สำเร็จ: {e}")
 
 st.divider()
-st.subheader("ประวัติการนับล่าสุด")
-try:
-    recent = load_recent_counts()
-    if recent.empty:
-        st.caption("ยังไม่มีข้อมูล")
-    else:
-        st.dataframe(recent, width="stretch", hide_index=True)
-except SheetNotConfiguredError:
-    pass
-except Exception as e:  # noqa: BLE001
-    st.caption(f"โหลดประวัติไม่สำเร็จ: {e}")
-
-st.divider()
+with st.expander("🕘 ประวัติการนับล่าสุด"):
+    try:
+        recent = load_recent_counts()
+        if recent.empty:
+            st.caption("ยังไม่มีข้อมูล")
+        else:
+            st.dataframe(recent, width="stretch", hide_index=True)
+    except SheetNotConfiguredError:
+        pass
+    except Exception as e:  # noqa: BLE001
+        st.caption(f"โหลดประวัติไม่สำเร็จ: {e}")
 
 
 def _status_options(df):
@@ -331,15 +343,17 @@ try:
 
     with st.expander("✅ ยาที่นับเสร็จแล้วทั้ง 2 ที่"):
         completed = find_fully_counted(master_df, _counts_for_status)
-        completed_options = _status_options(completed)
-        st.selectbox(
-            f"นับเสร็จแล้วทั้ง 2 ที่ ({len(completed_options)} รายการ)",
-            options=completed_options,
-            index=None,
-            placeholder="ยังไม่มีรายการที่นับครบ" if not completed_options else "เลือกดูรายการ...",
-            disabled=not completed_options,
-            key="completed_both_select",
-        )
+        st.caption(f"{len(completed)} รายการ")
+        if completed.empty:
+            st.caption("ยังไม่มีรายการที่นับครบ")
+        else:
+            name_col = MASTER_COLUMNS["name"]
+            unit_col = MASTER_COLUMNS["unit"]
+            st.dataframe(
+                completed[[name_col, unit_col]].reset_index(drop=True),
+                width="stretch",
+                hide_index=True,
+            )
 except SheetNotConfiguredError:
     pass
 except Exception as e:  # noqa: BLE001
