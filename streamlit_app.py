@@ -244,8 +244,6 @@ if matches is not None and not matches.empty:
     if not_ready:
         st.caption("กรุณากรอกจำนวนนับอย่างน้อย 1 ช่องก่อนบันทึก")
 
-    st.divider()
-
     st.html(
         """
         <style>
