@@ -33,7 +33,10 @@ LOG_COLUMNS = [
     "วันหมดอายุ",
     "จำนวนหน้าร้าน",
     "จำนวนโกดัง",
+    "ถูกเพิ่มใหม่",
 ]
+
+NEW_LOT_FLAG = "ถูกเพิ่มใหม่"
 
 
 class SheetNotConfiguredError(RuntimeError):
@@ -110,6 +113,18 @@ def find_by_barcode(df: pd.DataFrame, barcode: str) -> pd.DataFrame:
     return df[df[col] == barcode]
 
 
+def find_by_name(df: pd.DataFrame, name: str) -> pd.DataFrame:
+    col = MASTER_COLUMNS["name"]
+    return df[df[col] == name]
+
+
+def list_drug_names(df: pd.DataFrame) -> list[str]:
+    if df.empty:
+        return []
+    col = MASTER_COLUMNS["name"]
+    return sorted(n for n in df[col].dropna().unique().tolist() if n)
+
+
 def _ensure_log_worksheet(ss):
     name = _log_worksheet_name()
     try:
@@ -133,6 +148,154 @@ def _to_int_or_none(value) -> int | None:
         return int(float(value))
     except (TypeError, ValueError):
         return None
+
+
+def with_extra_lots(matches: pd.DataFrame) -> pd.DataFrame:
+    """Union `matches` (drug rows found via barcode/name search) with any
+    additional lots recorded in CountLog for the same barcode through the
+    "เพิ่มล็อตใหม่" flow, so a newly-registered lot is selectable right away
+    even though it isn't in MasterData yet."""
+    lot_col = MASTER_COLUMNS["lot"]
+    barcode_col = MASTER_COLUMNS["barcode"]
+    if matches.empty:
+        return matches
+
+    barcode = str(matches.iloc[0][barcode_col]).strip()
+    known_lots = set(matches[lot_col].astype(str).str.strip())
+    try:
+        counts_df = load_all_counts()
+    except Exception:  # noqa: BLE001
+        return matches
+    if counts_df.empty:
+        return matches
+
+    rows = counts_df[counts_df["บาร์โค้ด"].astype(str).str.strip() == barcode]
+    if rows.empty:
+        return matches
+    rows = rows.drop_duplicates(subset=["เลขที่ล็อต"], keep="last")
+    rows = rows[~rows["เลขที่ล็อต"].astype(str).str.strip().isin(known_lots)]
+    if rows.empty:
+        return matches
+
+    extra = pd.DataFrame(
+        {
+            MASTER_COLUMNS["barcode"]: rows["บาร์โค้ด"],
+            MASTER_COLUMNS["product_code"]: rows["รหัสสินค้า"],
+            MASTER_COLUMNS["name"]: rows["ชื่อยา"],
+            MASTER_COLUMNS["unit"]: rows["หน่วยนับ"],
+            MASTER_COLUMNS["lot"]: rows["เลขที่ล็อต"],
+            MASTER_COLUMNS["expiry"]: rows["วันหมดอายุ"],
+        }
+    ).reset_index(drop=True)
+    return pd.concat([matches, extra], ignore_index=True)
+
+
+def _full_universe(master_df: pd.DataFrame, counts_df: pd.DataFrame) -> pd.DataFrame:
+    """Every lot that should be tracked: MasterData plus any lot recorded in
+    CountLog (e.g. via "เพิ่มล็อตใหม่") that isn't in MasterData yet."""
+    barcode_col = MASTER_COLUMNS["barcode"]
+    lot_col = MASTER_COLUMNS["lot"]
+    if counts_df.empty:
+        return master_df
+
+    known = set()
+    if not master_df.empty:
+        known = set(
+            zip(
+                master_df[barcode_col].astype(str).str.strip(),
+                master_df[lot_col].astype(str).str.strip(),
+            )
+        )
+
+    counts_df = counts_df.copy()
+    counts_df["_barcode"] = counts_df["บาร์โค้ด"].astype(str).str.strip()
+    counts_df["_lot"] = counts_df["เลขที่ล็อต"].astype(str).str.strip()
+    extra_rows = counts_df.drop_duplicates(subset=["_barcode", "_lot"], keep="last")
+    extra_rows = extra_rows[
+        ~extra_rows.apply(lambda r: (r["_barcode"], r["_lot"]) in known, axis=1)
+    ]
+    if extra_rows.empty:
+        return master_df
+
+    extra = pd.DataFrame(
+        {
+            MASTER_COLUMNS["barcode"]: extra_rows["บาร์โค้ด"],
+            MASTER_COLUMNS["product_code"]: extra_rows["รหัสสินค้า"],
+            MASTER_COLUMNS["name"]: extra_rows["ชื่อยา"],
+            MASTER_COLUMNS["unit"]: extra_rows["หน่วยนับ"],
+            MASTER_COLUMNS["lot"]: extra_rows["เลขที่ล็อต"],
+            MASTER_COLUMNS["expiry"]: extra_rows["วันหมดอายุ"],
+        }
+    ).reset_index(drop=True)
+    if master_df.empty:
+        return extra
+    return pd.concat([master_df, extra], ignore_index=True)
+
+
+def _count_status_map(counts_df: pd.DataFrame) -> dict[tuple[str, str], dict]:
+    status_map: dict[tuple[str, str], dict] = {}
+    if counts_df.empty:
+        return status_map
+    for _, row in counts_df.iterrows():
+        key = (str(row["บาร์โค้ด"]).strip(), str(row["เลขที่ล็อต"]).strip())
+        status_map[key] = {
+            "front_qty": _to_int_or_none(row["จำนวนหน้าร้าน"]),
+            "warehouse_qty": _to_int_or_none(row["จำนวนโกดัง"]),
+        }
+    return status_map
+
+
+def find_uncounted(
+    master_df: pd.DataFrame, counts_df: pd.DataFrame, *, location: str = "both"
+) -> pd.DataFrame:
+    """Lots with no count recorded for the given location.
+
+    location: "both" -> neither หน้าร้าน nor โกดัง has been counted
+              "front" -> หน้าร้าน not counted (regardless of โกดัง)
+              "warehouse" -> โกดัง not counted (regardless of หน้าร้าน)
+    """
+    universe = _full_universe(master_df, counts_df)
+    if universe.empty:
+        return universe
+
+    barcode_col = MASTER_COLUMNS["barcode"]
+    lot_col = MASTER_COLUMNS["lot"]
+    status_map = _count_status_map(counts_df)
+
+    def is_uncounted(row) -> bool:
+        key = (str(row[barcode_col]).strip(), str(row[lot_col]).strip())
+        status = status_map.get(key)
+        front_done = status is not None and status["front_qty"] is not None
+        warehouse_done = status is not None and status["warehouse_qty"] is not None
+        if location == "front":
+            return not front_done
+        if location == "warehouse":
+            return not warehouse_done
+        return not front_done and not warehouse_done
+
+    mask = universe.apply(is_uncounted, axis=1)
+    return universe[mask]
+
+
+def find_fully_counted(master_df: pd.DataFrame, counts_df: pd.DataFrame) -> pd.DataFrame:
+    """Lots that have a recorded count at both หน้าร้าน and โกดัง."""
+    universe = _full_universe(master_df, counts_df)
+    if universe.empty:
+        return universe
+
+    barcode_col = MASTER_COLUMNS["barcode"]
+    lot_col = MASTER_COLUMNS["lot"]
+    status_map = _count_status_map(counts_df)
+
+    def is_fully_counted(row) -> bool:
+        key = (str(row[barcode_col]).strip(), str(row[lot_col]).strip())
+        status = status_map.get(key)
+        if status is None:
+            return False
+        return status["front_qty"] is not None and status["warehouse_qty"] is not None
+
+    mask = universe.apply(is_fully_counted, axis=1)
+    return universe[mask]
 
 
 def find_latest_count(df: pd.DataFrame, barcode: str, lot: str) -> dict | None:
@@ -175,6 +338,7 @@ def append_count(
     expiry: str,
     front_qty: float | None,
     warehouse_qty: float | None,
+    is_new_lot: bool = False,
 ) -> None:
     ss = _get_spreadsheet()
     ws = _ensure_log_worksheet(ss)
@@ -189,12 +353,13 @@ def append_count(
         expiry,
         front_qty if front_qty is not None else "",
         warehouse_qty if warehouse_qty is not None else "",
+        NEW_LOT_FLAG if is_new_lot else "",
     ]
     existing_row_number = _find_row_number(ws, barcode, lot)
     if existing_row_number is not None:
         ws.update(
             [row],
-            range_name=f"A{existing_row_number}:J{existing_row_number}",
+            range_name=f"A{existing_row_number}:K{existing_row_number}",
             value_input_option="USER_ENTERED",
         )
     else:

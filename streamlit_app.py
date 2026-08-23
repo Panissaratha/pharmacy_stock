@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime as dt
+
 import streamlit as st
 
 from utils import auth
@@ -9,13 +11,23 @@ from utils.sheets import (
     SheetNotConfiguredError,
     append_count,
     find_by_barcode,
+    find_by_name,
+    find_fully_counted,
     find_latest_count,
+    find_uncounted,
+    list_drug_names,
     load_all_counts,
     load_master_data,
     load_recent_counts,
+    with_extra_lots,
 )
 
-st.set_page_config(page_title="นับสต็อก", page_icon="💊", layout="centered")
+st.set_page_config(
+    page_title="นับสต็อก",
+    page_icon="💊",
+    layout="centered",
+    initial_sidebar_state="collapsed",
+)
 
 if not auth.is_logged_in():
     auth.login_form()
@@ -52,22 +64,6 @@ if master_df.empty:
 
 if "matches" not in st.session_state:
     st.session_state.matches = None
-    st.session_state.scanned_barcode = ""
-
-# --- ขั้นตอนที่ 1: สแกน / กรอกบาร์โค้ด ---
-with st.form("barcode_form", clear_on_submit=True):
-    barcode_input = st.text_input("📷 สแกน หรือ กรอกเลขบาร์โค้ด", key="barcode_field")
-    scan_submit = st.form_submit_button("ค้นหา", width="stretch")
-
-if scan_submit and barcode_input.strip():
-    matches = find_by_barcode(master_df, barcode_input)
-    if matches.empty:
-        st.error(f"ไม่พบยาที่มีบาร์โค้ด: {barcode_input}")
-        st.session_state.matches = None
-    else:
-        st.session_state.matches = matches
-        st.session_state.scanned_barcode = barcode_input.strip()
-
 
 def _handle_camera_scan() -> None:
     result = st.session_state.get("camera_scanner")
@@ -85,23 +81,72 @@ def _handle_camera_scan() -> None:
         st.session_state.camera_scan_error = f"ไม่พบยาที่มีบาร์โค้ด: {barcode}"
     else:
         st.session_state.matches = found
-        st.session_state.scanned_barcode = barcode.strip()
         st.session_state.camera_scan_error = None
         st.session_state["barcode_field"] = barcode.strip()
 
 
-st.caption("หรือ")
-barcode_camera_scanner(key="camera_scanner", on_scanned_change=_handle_camera_scan)
+def _handle_name_select() -> None:
+    selected_name = st.session_state.get("name_search_select")
+    if not selected_name:
+        return
+    try:
+        df = load_master_data()
+    except Exception:  # noqa: BLE001
+        return
+    found = find_by_name(df, selected_name)
+    if not found.empty:
+        st.session_state.matches = found
+
+
+# ช่องสแกนบาร์โค้ด / ค้นหาด้วยชื่อยา / ปุ่มเปิดกล้อง อยู่ในกรอบเดียวกัน
+with st.container(border=True):
+    with st.form("barcode_form", clear_on_submit=True, border=False):
+        barcode_input = st.text_input(
+            "📷 สแกน หรือ กรอกเลขบาร์โค้ด", key="barcode_field"
+        )
+        scan_submit = st.form_submit_button("ค้นหา", width="stretch")
+
+    if scan_submit and barcode_input.strip():
+        matches = find_by_barcode(master_df, barcode_input)
+        if matches.empty:
+            st.error(f"ไม่พบยาที่มีบาร์โค้ด: {barcode_input}")
+            st.session_state.matches = None
+        else:
+            st.session_state.matches = matches
+
+    st.divider()
+
+    # st.selectbox กรอง option ให้เองแบบ live ตอนพิมพ์อยู่แล้ว (ในตัว widget เดียว)
+    # จึงไม่ต้องมีช่องพิมพ์คำค้นหาแยกกับ dropdown แสดงผลอีกอัน
+    name_options = list_drug_names(master_df)
+    st.selectbox(
+        "🔍 ค้นหาด้วยชื่อยา",
+        options=name_options,
+        index=None,
+        placeholder="พิมพ์ชื่อยาบางส่วน..." if name_options else "ยังไม่มีข้อมูลยา",
+        key="name_search_select",
+        on_change=_handle_name_select,
+        disabled=not name_options,
+    )
+
+    st.divider()
+
+    barcode_camera_scanner(key="camera_scanner", on_scanned_change=_handle_camera_scan)
+
 if st.session_state.get("camera_scan_error"):
     st.error(st.session_state.camera_scan_error)
     st.session_state.camera_scan_error = None
 
 # ให้เคอร์เซอร์กลับไปที่ช่องบาร์โค้ดอัตโนมัติ เพื่อสแกนชิ้นถัดไปได้ทันที
+# ครอบด้วย IIFE เพราะสคริปต์นี้ถูกแทรกเข้า DOM ใหม่ทุกครั้งที่ rerun — ถ้าประกาศ
+# const ไว้นอกฟังก์ชันจะชนกับตัวแปรเดิมจาก run ก่อนหน้าและโยน SyntaxError
 st.html(
     """
     <script>
-    const inputs = document.querySelectorAll('input[type="text"]');
-    if (inputs.length > 0) { inputs[0].focus(); }
+    (function () {
+      const inputs = document.querySelectorAll('input[type="text"]');
+      if (inputs.length > 0) { inputs[0].focus(); }
+    })();
     </script>
     """,
     unsafe_allow_javascript=True,
@@ -110,6 +155,7 @@ st.html(
 # --- ขั้นตอนที่ 2: แสดงข้อมูลยา และกรอกจำนวนนับ ---
 matches = st.session_state.matches
 if matches is not None and not matches.empty:
+    barcode_col = MASTER_COLUMNS["barcode"]
     product_code_col = MASTER_COLUMNS["product_code"]
     name_col = MASTER_COLUMNS["name"]
     unit_col = MASTER_COLUMNS["unit"]
@@ -117,41 +163,45 @@ if matches is not None and not matches.empty:
     expiry_col = MASTER_COLUMNS["expiry"]
 
     st.divider()
+
+    # รวมล็อตที่เคย "เพิ่มล็อตใหม่" ไว้ใน CountLog เข้ากับล็อตจาก MasterData
+    # เพื่อให้เลือกล็อตที่เพิ่มเองก่อนหน้านี้ได้จาก dropdown เดียวกันเลย
+    matches = with_extra_lots(matches)
+
     st.subheader(f"ชื่อยา: {matches.iloc[0][name_col]}")
-    st.write(f"รหัสสินค้า: **{matches.iloc[0][product_code_col]}**")
     st.write(f"หน่วยนับ: **{matches.iloc[0][unit_col]}**")
 
     if len(matches) > 1:
-        st.error("มีหลายล็อต ให้เลือกล็อตก่อนนับ")
+        st.error("มีหลายล็อต เลือกล็อตก่อนนับ")
         options = [
             f"ล็อต {row[lot_col]} — หมดอายุ {row[expiry_col]}"
             for _, row in matches.iterrows()
         ]
         selected = st.selectbox("เลือกเลขล็อต / วันหมดอายุ", options)
         selected_row = matches.iloc[options.index(selected)]
-        
     else:
-        st.error("มีล็อตเดียว")
+        st.info("มีล็อตเดียว")
         selected_row = matches.iloc[0]
         st.write(
             f"เลขที่ล็อต: **{selected_row[lot_col]}**  |  "
             f"วันหมดอายุ: **{selected_row[expiry_col]}**"
         )
-        
+
+    actual_barcode = str(selected_row[barcode_col])
     lot_value = str(selected_row[lot_col])
     try:
-        existing = find_latest_count(
-            load_all_counts(), st.session_state.scanned_barcode, lot_value
-        )
+        existing = find_latest_count(load_all_counts(), actual_barcode, lot_value)
     except Exception:  # noqa: BLE001
         existing = None
 
-    if existing:
+    if existing and (
+        existing["front_qty"] is not None or existing["warehouse_qty"] is not None
+    ):
         st.caption("เคยนับไปแล้ว — แก้ไขแล้วบันทึกซ้ำได้")
 
     # คีย์ของ widget ต้องผูกกับบาร์โค้ด+ล็อต เพื่อให้ค่าที่กรอกไม่ตกค้าง
     # ข้ามไปยังยาตัวถัดไปเมื่อสแกนรายการใหม่โดยยังไม่ได้บันทึก
-    item_key = f"{st.session_state.scanned_barcode}__{lot_value}"
+    item_key = f"{actual_barcode}__{lot_value}"
 
     col1, col2 = st.columns(2)
     with col1:
@@ -180,7 +230,7 @@ if matches is not None and not matches.empty:
         try:
             append_count(
                 user=user["name"],
-                barcode=st.session_state.scanned_barcode,
+                barcode=actual_barcode,
                 product_code=selected_row[product_code_col],
                 name=selected_row[name_col],
                 unit=selected_row[unit_col],
@@ -191,12 +241,50 @@ if matches is not None and not matches.empty:
             )
             st.success("บันทึกสำเร็จ")
             st.session_state.matches = None
-            st.session_state.scanned_barcode = ""
+            st.session_state.pop("name_search_select", None)
             st.rerun()
         except Exception as e:  # noqa: BLE001
             st.error(f"บันทึกไม่สำเร็จ: {e}")
     if not_ready:
         st.caption("กรุณากรอกจำนวนนับอย่างน้อย 1 ช่องก่อนบันทึก")
+
+    st.divider()
+
+    with st.expander("➕ เพิ่มล็อตใหม่ (ถ้าไม่มีเลขล็อตนี้ในรายการ)"):
+        new_lot_key = f"new_lot_input_{actual_barcode}"
+        new_expiry_key = f"new_expiry_input_{actual_barcode}"
+        new_lot = st.text_input("เลขที่ล็อต", key=new_lot_key)
+        new_expiry = st.date_input(
+            "วันหมดอายุ",
+            value=None,
+            # ยาบางตัวอายุยาวหลายสิบปี ขยายเพดานให้กว้างกว่าค่าเริ่มต้น (~10 ปี) ของ Streamlit
+            max_value=dt.date.today() + dt.timedelta(days=365 * 30),
+            format="DD/MM/YYYY",
+            key=new_expiry_key,
+        )
+        if st.button("บันทึกล็อตใหม่", key=f"save_new_lot_{actual_barcode}"):
+            if not new_lot.strip() or new_expiry is None:
+                st.error("กรุณากรอกเลขล็อตและวันหมดอายุให้ครบ")
+            else:
+                try:
+                    append_count(
+                        user=user["name"],
+                        barcode=actual_barcode,
+                        product_code=matches.iloc[0][product_code_col],
+                        name=matches.iloc[0][name_col],
+                        unit=matches.iloc[0][unit_col],
+                        lot=new_lot.strip(),
+                        expiry=new_expiry.strftime("%d/%m/%Y"),
+                        front_qty=None,
+                        warehouse_qty=None,
+                        is_new_lot=True,
+                    )
+                    st.success("เพิ่มล็อตใหม่แล้ว เลือกได้จาก dropdown ด้านบน")
+                    st.session_state.pop(new_lot_key, None)
+                    st.session_state.pop(new_expiry_key, None)
+                    st.rerun()
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"บันทึกไม่สำเร็จ: {e}")
 
 st.divider()
 st.subheader("ประวัติการนับล่าสุด")
@@ -210,3 +298,49 @@ except SheetNotConfiguredError:
     pass
 except Exception as e:  # noqa: BLE001
     st.caption(f"โหลดประวัติไม่สำเร็จ: {e}")
+
+st.divider()
+
+
+def _status_options(df):
+    name_col = MASTER_COLUMNS["name"]
+    unit_col = MASTER_COLUMNS["unit"]
+    return [f"{row[name_col]} — {row[unit_col]}" for _, row in df.iterrows()]
+
+
+try:
+    _counts_for_status = load_all_counts()
+
+    with st.expander("📋 ยาที่ยังไม่ได้นับ"):
+
+        def _uncounted_dropdown(label: str, location: str) -> None:
+            items = find_uncounted(master_df, _counts_for_status, location=location)
+            options = _status_options(items)
+            st.selectbox(
+                f"{label} ({len(options)} รายการ)",
+                options=options,
+                index=None,
+                placeholder="ไม่มีรายการค้างนับ 🎉" if not options else "เลือกดูรายการ...",
+                disabled=not options,
+                key=f"uncounted_{location}_select",
+            )
+
+        _uncounted_dropdown("ยังไม่ได้นับทั้ง 2 ที่", "both")
+        _uncounted_dropdown("ยังไม่ได้นับหน้าร้าน", "front")
+        _uncounted_dropdown("ยังไม่ได้นับในโกดัง", "warehouse")
+
+    with st.expander("✅ ยาที่นับเสร็จแล้วทั้ง 2 ที่"):
+        completed = find_fully_counted(master_df, _counts_for_status)
+        completed_options = _status_options(completed)
+        st.selectbox(
+            f"นับเสร็จแล้วทั้ง 2 ที่ ({len(completed_options)} รายการ)",
+            options=completed_options,
+            index=None,
+            placeholder="ยังไม่มีรายการที่นับครบ" if not completed_options else "เลือกดูรายการ...",
+            disabled=not completed_options,
+            key="completed_both_select",
+        )
+except SheetNotConfiguredError:
+    pass
+except Exception as e:  # noqa: BLE001
+    st.caption(f"โหลดสถานะการนับไม่สำเร็จ: {e}")

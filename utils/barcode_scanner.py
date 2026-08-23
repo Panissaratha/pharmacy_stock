@@ -9,10 +9,41 @@ import streamlit as st
 _HTML5_QRCODE_CDN_URL = "https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"
 
 _HTML = """
+<style>
+  /* จำลองสไตล์ปุ่มมาตรฐานของ Streamlit (secondary button) ด้วยตัวแปรธีม --st-*
+     เพื่อให้หน้าตาตรงกับปุ่ม "ค้นหา" ทั้งขนาด ขอบมน และสีตามธีมปัจจุบัน */
+  .ph-scan-btn {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 0.5rem;
+    padding: 0.375rem 0.75rem;
+    min-height: 2.5rem;
+    border-radius: var(--st-button-radius, 0.5rem);
+    border: 1px solid var(--st-border-color, rgba(49, 51, 63, 0.2));
+    background: var(--st-background-color, #ffffff);
+    color: var(--st-text-color, #31333f);
+    font-family: var(--st-font, inherit);
+    font-size: var(--st-base-font-size, 1rem);
+    font-weight: var(--st-base-font-weight, 400);
+    line-height: 1.6;
+    cursor: pointer;
+  }
+  .ph-scan-btn:hover {
+    border-color: var(--st-primary-color, #ff4b4b);
+    color: var(--st-primary-color, #ff4b4b);
+  }
+  .ph-scan-btn-open {
+    background: #fff3cd;
+  }
+  .ph-scan-btn-open:hover {
+    background: #ffecb0;
+  }
+</style>
 <div>
-  <button id="ph-scan-open" type="button">📷 เปิดกล้องสแกนบาร์โค้ด</button>
-  <button id="ph-scan-close" type="button" style="display:none;">✕ ปิดกล้อง</button>
-  <div id="ph-scan-status" style="font-size:0.85em;margin-top:6px;color:#666;"></div>
+  <button id="ph-scan-open" type="button" class="ph-scan-btn ph-scan-btn-open">📷 เปิดกล้องสแกนบาร์โค้ด</button>
+  <button id="ph-scan-close" type="button" class="ph-scan-btn" style="display:none;">✕ ปิดกล้อง</button>
+  <div id="ph-scan-status" style="font-size:0.85em;margin-top:6px;color:var(--st-text-color, #666);"></div>
   <div id="ph-scan-reader" style="width:100%;max-width:360px;margin-top:8px;display:none;"></div>
 </div>
 """
@@ -56,7 +87,7 @@ export default function (component) {
       scanner = null
     }
     readerEl.style.display = 'none'
-    openBtn.style.display = 'inline-block'
+    openBtn.style.display = 'block'
     closeBtn.style.display = 'none'
     statusEl.textContent = ''
   }
@@ -71,7 +102,7 @@ export default function (component) {
     }
 
     openBtn.style.display = 'none'
-    closeBtn.style.display = 'inline-block'
+    closeBtn.style.display = 'block'
     readerEl.style.display = 'block'
     statusEl.textContent = 'กำลังเปิดกล้อง...'
 
