@@ -21,9 +21,11 @@ MASTER_COLUMNS = {
     "lot": "เลขที่ล็อต",
     "expiry": "วันหมดอายุ",
     "remaining": "คงเหลือ",
+    "excess": "เกิน",
+    "shortfall": "ขาด",
 }
 
-# username ที่มีสิทธิ์เห็นคอลัมน์ "คงเหลือ" (สต็อกคงเหลือ) ในหน้าแอป
+# username ที่มีสิทธิ์เห็นคอลัมน์ "คงเหลือ" / "เกิน" / "ขาด" ในหน้าแอป
 REMAINING_STOCK_VIEWERS = {"ef", "pns"}
 
 LOG_COLUMNS = [
@@ -83,16 +85,29 @@ def _log_worksheet_name() -> str:
     return _get_secret_section("sheet").get("log_worksheet", "CountLog")
 
 
+def _get_all_values_and_records(ws) -> tuple[list[list[str]], list[dict]]:
+    # A single get_all_values() call returns the whole grid as plain strings
+    # (headers + rows) in one API request. We build the header->value dicts
+    # ourselves from that instead of also calling gspread's get_all_records()
+    # (which would be a second, redundant full-sheet read) — this halves the
+    # read-quota cost of every call site below, and as a side effect avoids
+    # gspread's numericise-on-read behavior entirely (it silently strips
+    # leading zeros from codes like "003265" since int("003265") == 3265).
+    values = ws.get_all_values()
+    if not values:
+        return [], []
+    headers = values[0]
+    records = []
+    for row in values[1:]:
+        if len(row) < len(headers):
+            row = row + [""] * (len(headers) - len(row))
+        records.append(dict(zip(headers, row)))
+    return values, records
+
+
 def _get_all_records_as_str(ws) -> list[dict]:
-    # gspread's get_all_records() numericises any column that "looks like a
-    # number" based purely on the cell's string content — it ignores the
-    # cell's declared number format entirely. That silently strips leading
-    # zeros from codes like "003265" (int("003265") == 3265). Passing every
-    # column index in numericise_ignore disables that conversion so codes
-    # round-trip exactly as typed.
-    headers = ws.row_values(1)
-    numericise_ignore = list(range(1, len(headers) + 1))
-    return ws.get_all_records(numericise_ignore=numericise_ignore)
+    _, records = _get_all_values_and_records(ws)
+    return records
 
 
 @st.cache_data(ttl=60, show_spinner="กำลังโหลดข้อมูลยาจาก Google Sheet...")
@@ -331,6 +346,80 @@ def _find_row_number(ws, barcode: str, lot: str) -> int | None:
     return row_number
 
 
+def _update_variance(
+    barcode: str, lot: str, front_qty: float | None, warehouse_qty: float | None
+) -> None:
+    """Recompute "เกิน"/"ขาด" for this lot in MasterData against "คงเหลือ",
+    comparing it to the just-saved counted total. Best-effort: any failure
+    (missing columns, lot not in MasterData, no "คงเหลือ" recorded yet, ...)
+    is silently skipped so it never blocks the actual count from saving.
+
+    Uses a single get_all_values() read and a single range write (เกิน/ขาด
+    are adjacent columns) to keep this cheap on the Sheets API read quota —
+    it previously cost 4 reads + 2 writes per count save."""
+    if front_qty is None and warehouse_qty is None:
+        return
+    try:
+        ss = _get_spreadsheet()
+        ws = ss.worksheet(_master_worksheet_name())
+        values = ws.get_all_values()
+        if not values:
+            return
+        headers = values[0]
+
+        barcode_col = MASTER_COLUMNS["barcode"]
+        lot_col = MASTER_COLUMNS["lot"]
+        remaining_col = MASTER_COLUMNS["remaining"]
+        excess_col = MASTER_COLUMNS["excess"]
+        shortfall_col = MASTER_COLUMNS["shortfall"]
+        required = (barcode_col, lot_col, remaining_col, excess_col, shortfall_col)
+        if not all(col in headers for col in required):
+            return
+
+        barcode_idx = headers.index(barcode_col)
+        lot_idx = headers.index(lot_col)
+        remaining_idx = headers.index(remaining_col)
+        excess_idx = headers.index(excess_col)
+        shortfall_idx = headers.index(shortfall_col)
+
+        row_number = None
+        row_values: list[str] = []
+        for i, row in enumerate(values[1:], start=2):
+            row_barcode = row[barcode_idx].strip() if barcode_idx < len(row) else ""
+            row_lot = row[lot_idx].strip() if lot_idx < len(row) else ""
+            if row_barcode == barcode.strip() and row_lot == str(lot).strip():
+                row_number = i
+                row_values = row
+        if row_number is None:
+            return
+
+        remaining_raw = row_values[remaining_idx] if remaining_idx < len(row_values) else ""
+        remaining_value = _to_int_or_none(remaining_raw)
+        if remaining_value is None:
+            return
+
+        counted_total = (front_qty or 0) + (warehouse_qty or 0)
+        diff = counted_total - remaining_value
+        excess = diff if diff > 0 else 0
+        shortfall = -diff if diff < 0 else 0
+
+        if excess_idx + 1 == shortfall_idx:
+            # เกิน/ขาด อยู่ติดกัน เขียนทีเดียวในคำขอเดียว
+            start_a1 = gspread.utils.rowcol_to_a1(row_number, excess_idx + 1)
+            end_a1 = gspread.utils.rowcol_to_a1(row_number, shortfall_idx + 1)
+            ws.update(
+                [[excess, shortfall]],
+                range_name=f"{start_a1}:{end_a1}",
+                value_input_option="USER_ENTERED",
+            )
+        else:
+            ws.update_cell(row_number, excess_idx + 1, excess)
+            ws.update_cell(row_number, shortfall_idx + 1, shortfall)
+        load_master_data.clear()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def append_count(
     *,
     user: str,
@@ -370,6 +459,7 @@ def append_count(
         ws.append_row(row, value_input_option="USER_ENTERED")
     load_recent_counts.clear()
     load_all_counts.clear()
+    _update_variance(barcode, lot, front_qty, warehouse_qty)
 
 
 @st.cache_data(ttl=30, show_spinner=False)

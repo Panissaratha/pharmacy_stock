@@ -167,10 +167,6 @@ if matches is not None and not matches.empty:
 
     st.subheader(f"ชื่อยา: {matches.iloc[0][name_col]}")
     st.write(f"หน่วยนับ: **{matches.iloc[0][unit_col]}**")
-    if user["username"] in REMAINING_STOCK_VIEWERS:
-        remaining_col = MASTER_COLUMNS["remaining"]
-        remaining_value = matches.iloc[0].get(remaining_col, "")
-        st.write(f"คงเหลือ: **{remaining_value if remaining_value else '-'}**")
 
     if len(matches) > 1:
         st.error("มีหลายล็อต เลือกล็อตก่อนนับ")
@@ -186,6 +182,21 @@ if matches is not None and not matches.empty:
         st.write(
             f"เลขที่ล็อต: **{selected_row[lot_col]}**  |  "
             f"วันหมดอายุ: **{selected_row[expiry_col]}**"
+        )
+
+    # ข้อมูลคงเหลือ/เกิน/ขาด เป็นข้อมูลรายล็อต (เทียบกับ CountLog ของล็อตนั้นๆ)
+    # และให้เห็นเฉพาะ user ที่กำหนดไว้
+    if user["username"] in REMAINING_STOCK_VIEWERS:
+        remaining_col = MASTER_COLUMNS["remaining"]
+        excess_col = MASTER_COLUMNS["excess"]
+        shortfall_col = MASTER_COLUMNS["shortfall"]
+        remaining_value = selected_row.get(remaining_col, "")
+        excess_value = selected_row.get(excess_col, "")
+        shortfall_value = selected_row.get(shortfall_col, "")
+        st.write(f"คงเหลือ: **{remaining_value if remaining_value else '-'}**")
+        st.write(
+            f"เกิน: **{excess_value if excess_value else '-'}**  |  "
+            f"ขาด: **{shortfall_value if shortfall_value else '-'}**"
         )
 
     actual_barcode = str(selected_row[barcode_col])
