@@ -20,7 +20,11 @@ MASTER_COLUMNS = {
     "unit": "หน่วยนับ",
     "lot": "เลขที่ล็อต",
     "expiry": "วันหมดอายุ",
+    "remaining": "คงเหลือ",
 }
+
+# username ที่มีสิทธิ์เห็นคอลัมน์ "คงเหลือ" (สต็อกคงเหลือ) ในหน้าแอป
+REMAINING_STOCK_VIEWERS = {"ef", "pns"}
 
 LOG_COLUMNS = [
     "เวลาบันทึก",

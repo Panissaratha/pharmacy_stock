@@ -8,6 +8,7 @@ from utils import auth
 from utils.barcode_scanner import barcode_camera_scanner
 from utils.sheets import (
     MASTER_COLUMNS,
+    REMAINING_STOCK_VIEWERS,
     SheetNotConfiguredError,
     append_count,
     find_by_barcode,
@@ -166,6 +167,10 @@ if matches is not None and not matches.empty:
 
     st.subheader(f"ชื่อยา: {matches.iloc[0][name_col]}")
     st.write(f"หน่วยนับ: **{matches.iloc[0][unit_col]}**")
+    if user["username"] in REMAINING_STOCK_VIEWERS:
+        remaining_col = MASTER_COLUMNS["remaining"]
+        remaining_value = matches.iloc[0].get(remaining_col, "")
+        st.write(f"คงเหลือ: **{remaining_value if remaining_value else '-'}**")
 
     if len(matches) > 1:
         st.error("มีหลายล็อต เลือกล็อตก่อนนับ")
