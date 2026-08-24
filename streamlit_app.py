@@ -325,9 +325,15 @@ with st.expander("🕘 ประวัติการนับล่าสุด
 
 
 def _status_options(df):
+    # ยาตัวเดียวกันอาจมีหลายล็อต บางล็อตนับแล้วบางล็อตยังไม่นับ ต้องใส่เลขล็อต
+    # กำกับไว้เสมอ ไม่งั้นจะดูเหมือนยาที่นับไปแล้วโผล่มาซ้ำในลิสต์ยังไม่ได้นับ
     name_col = MASTER_COLUMNS["name"]
     unit_col = MASTER_COLUMNS["unit"]
-    return [f"{row[name_col]} — {row[unit_col]}" for _, row in df.iterrows()]
+    lot_col = MASTER_COLUMNS["lot"]
+    return [
+        f"{row[name_col]} — {row[unit_col]} (ล็อต {row[lot_col]})"
+        for _, row in df.iterrows()
+    ]
 
 
 try:
@@ -359,8 +365,9 @@ try:
         else:
             name_col = MASTER_COLUMNS["name"]
             unit_col = MASTER_COLUMNS["unit"]
+            lot_col = MASTER_COLUMNS["lot"]
             st.dataframe(
-                completed[[name_col, unit_col]].reset_index(drop=True),
+                completed[[name_col, unit_col, lot_col]].reset_index(drop=True),
                 width="stretch",
                 hide_index=True,
             )
