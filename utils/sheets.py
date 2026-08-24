@@ -173,14 +173,24 @@ def with_extra_lots(matches: pd.DataFrame) -> pd.DataFrame:
     """Union `matches` (drug rows found via barcode/name search) with any
     additional lots recorded in CountLog for the same barcode through the
     "เพิ่มล็อตใหม่" flow, so a newly-registered lot is selectable right away
-    even though it isn't in MasterData yet."""
+    even though it isn't in MasterData yet.
+
+    Identity is (lot, expiry) — not lot alone — because the same lot number
+    can legitimately appear twice in MasterData with different expiry dates
+    (separate physical batches)."""
     lot_col = MASTER_COLUMNS["lot"]
+    expiry_col = MASTER_COLUMNS["expiry"]
     barcode_col = MASTER_COLUMNS["barcode"]
     if matches.empty:
         return matches
 
     barcode = str(matches.iloc[0][barcode_col]).strip()
-    known_lots = set(matches[lot_col].astype(str).str.strip())
+    known_lots = set(
+        zip(
+            matches[lot_col].astype(str).str.strip(),
+            matches[expiry_col].astype(str).str.strip(),
+        )
+    )
     try:
         counts_df = load_all_counts()
     except Exception:  # noqa: BLE001
@@ -191,8 +201,14 @@ def with_extra_lots(matches: pd.DataFrame) -> pd.DataFrame:
     rows = counts_df[counts_df["บาร์โค้ด"].astype(str).str.strip() == barcode]
     if rows.empty:
         return matches
-    rows = rows.drop_duplicates(subset=["เลขที่ล็อต"], keep="last")
-    rows = rows[~rows["เลขที่ล็อต"].astype(str).str.strip().isin(known_lots)]
+    rows = rows.drop_duplicates(subset=["เลขที่ล็อต", "วันหมดอายุ"], keep="last")
+    rows = rows[
+        ~rows.apply(
+            lambda r: (str(r["เลขที่ล็อต"]).strip(), str(r["วันหมดอายุ"]).strip())
+            in known_lots,
+            axis=1,
+        )
+    ]
     if rows.empty:
         return matches
 
@@ -211,9 +227,14 @@ def with_extra_lots(matches: pd.DataFrame) -> pd.DataFrame:
 
 def _full_universe(master_df: pd.DataFrame, counts_df: pd.DataFrame) -> pd.DataFrame:
     """Every lot that should be tracked: MasterData plus any lot recorded in
-    CountLog (e.g. via "เพิ่มล็อตใหม่") that isn't in MasterData yet."""
+    CountLog (e.g. via "เพิ่มล็อตใหม่") that isn't in MasterData yet.
+
+    Identity is (barcode, lot, expiry) — the same lot number can legitimately
+    appear twice in MasterData with different expiry dates (separate
+    physical batches), so lot alone isn't a unique key."""
     barcode_col = MASTER_COLUMNS["barcode"]
     lot_col = MASTER_COLUMNS["lot"]
+    expiry_col = MASTER_COLUMNS["expiry"]
     if counts_df.empty:
         return master_df
 
@@ -223,15 +244,21 @@ def _full_universe(master_df: pd.DataFrame, counts_df: pd.DataFrame) -> pd.DataF
             zip(
                 master_df[barcode_col].astype(str).str.strip(),
                 master_df[lot_col].astype(str).str.strip(),
+                master_df[expiry_col].astype(str).str.strip(),
             )
         )
 
     counts_df = counts_df.copy()
     counts_df["_barcode"] = counts_df["บาร์โค้ด"].astype(str).str.strip()
     counts_df["_lot"] = counts_df["เลขที่ล็อต"].astype(str).str.strip()
-    extra_rows = counts_df.drop_duplicates(subset=["_barcode", "_lot"], keep="last")
+    counts_df["_expiry"] = counts_df["วันหมดอายุ"].astype(str).str.strip()
+    extra_rows = counts_df.drop_duplicates(
+        subset=["_barcode", "_lot", "_expiry"], keep="last"
+    )
     extra_rows = extra_rows[
-        ~extra_rows.apply(lambda r: (r["_barcode"], r["_lot"]) in known, axis=1)
+        ~extra_rows.apply(
+            lambda r: (r["_barcode"], r["_lot"], r["_expiry"]) in known, axis=1
+        )
     ]
     if extra_rows.empty:
         return master_df
@@ -251,12 +278,18 @@ def _full_universe(master_df: pd.DataFrame, counts_df: pd.DataFrame) -> pd.DataF
     return pd.concat([master_df, extra], ignore_index=True)
 
 
-def _count_status_map(counts_df: pd.DataFrame) -> dict[tuple[str, str], dict]:
-    status_map: dict[tuple[str, str], dict] = {}
+def _count_status_map(counts_df: pd.DataFrame) -> dict[tuple[str, str, str], dict]:
+    # คีย์เป็น (บาร์โค้ด, เลขที่ล็อต, วันหมดอายุ) — เลขล็อตเดียวกันอาจมี
+    # วันหมดอายุต่างกันได้ (คนละล็อตทางกายภาพ) จึงต้องใช้ทั้ง 3 ค่าประกอบกัน
+    status_map: dict[tuple[str, str, str], dict] = {}
     if counts_df.empty:
         return status_map
     for _, row in counts_df.iterrows():
-        key = (str(row["บาร์โค้ด"]).strip(), str(row["เลขที่ล็อต"]).strip())
+        key = (
+            str(row["บาร์โค้ด"]).strip(),
+            str(row["เลขที่ล็อต"]).strip(),
+            str(row["วันหมดอายุ"]).strip(),
+        )
         status_map[key] = {
             "front_qty": _to_int_or_none(row["จำนวนหน้าร้าน"]),
             "warehouse_qty": _to_int_or_none(row["จำนวนโกดัง"]),
@@ -279,10 +312,15 @@ def find_uncounted(
 
     barcode_col = MASTER_COLUMNS["barcode"]
     lot_col = MASTER_COLUMNS["lot"]
+    expiry_col = MASTER_COLUMNS["expiry"]
     status_map = _count_status_map(counts_df)
 
     def is_uncounted(row) -> bool:
-        key = (str(row[barcode_col]).strip(), str(row[lot_col]).strip())
+        key = (
+            str(row[barcode_col]).strip(),
+            str(row[lot_col]).strip(),
+            str(row[expiry_col]).strip(),
+        )
         status = status_map.get(key)
         front_done = status is not None and status["front_qty"] is not None
         warehouse_done = status is not None and status["warehouse_qty"] is not None
@@ -304,10 +342,15 @@ def find_fully_counted(master_df: pd.DataFrame, counts_df: pd.DataFrame) -> pd.D
 
     barcode_col = MASTER_COLUMNS["barcode"]
     lot_col = MASTER_COLUMNS["lot"]
+    expiry_col = MASTER_COLUMNS["expiry"]
     status_map = _count_status_map(counts_df)
 
     def is_fully_counted(row) -> bool:
-        key = (str(row[barcode_col]).strip(), str(row[lot_col]).strip())
+        key = (
+            str(row[barcode_col]).strip(),
+            str(row[lot_col]).strip(),
+            str(row[expiry_col]).strip(),
+        )
         status = status_map.get(key)
         if status is None:
             return False
@@ -317,12 +360,13 @@ def find_fully_counted(master_df: pd.DataFrame, counts_df: pd.DataFrame) -> pd.D
     return universe[mask]
 
 
-def find_latest_count(df: pd.DataFrame, barcode: str, lot: str) -> dict | None:
+def find_latest_count(df: pd.DataFrame, barcode: str, lot: str, expiry: str) -> dict | None:
     if df.empty:
         return None
     matched = df[
         (df["บาร์โค้ด"].astype(str).str.strip() == barcode.strip())
         & (df["เลขที่ล็อต"].astype(str).str.strip() == str(lot).strip())
+        & (df["วันหมดอายุ"].astype(str).str.strip() == str(expiry).strip())
     ]
     if matched.empty:
         return None
@@ -333,7 +377,7 @@ def find_latest_count(df: pd.DataFrame, barcode: str, lot: str) -> dict | None:
     }
 
 
-def _find_row_number(ws, barcode: str, lot: str) -> int | None:
+def _find_row_number(ws, barcode: str, lot: str, expiry: str) -> int | None:
     """Return the 1-based sheet row number of the last matching entry, if any."""
     records = _get_all_records_as_str(ws)
     row_number = None
@@ -341,13 +385,18 @@ def _find_row_number(ws, barcode: str, lot: str) -> int | None:
         if (
             str(record.get("บาร์โค้ด", "")).strip() == barcode.strip()
             and str(record.get("เลขที่ล็อต", "")).strip() == str(lot).strip()
+            and str(record.get("วันหมดอายุ", "")).strip() == str(expiry).strip()
         ):
             row_number = i + 2  # +1 for the header row, +1 for 1-based indexing
     return row_number
 
 
 def _update_variance(
-    barcode: str, lot: str, front_qty: float | None, warehouse_qty: float | None
+    barcode: str,
+    lot: str,
+    expiry: str,
+    front_qty: float | None,
+    warehouse_qty: float | None,
 ) -> None:
     """Recompute "เกิน"/"ขาด" for this lot in MasterData against "คงเหลือ",
     comparing it to the just-saved counted total. Best-effort: any failure
@@ -369,15 +418,24 @@ def _update_variance(
 
         barcode_col = MASTER_COLUMNS["barcode"]
         lot_col = MASTER_COLUMNS["lot"]
+        expiry_col = MASTER_COLUMNS["expiry"]
         remaining_col = MASTER_COLUMNS["remaining"]
         excess_col = MASTER_COLUMNS["excess"]
         shortfall_col = MASTER_COLUMNS["shortfall"]
-        required = (barcode_col, lot_col, remaining_col, excess_col, shortfall_col)
+        required = (
+            barcode_col,
+            lot_col,
+            expiry_col,
+            remaining_col,
+            excess_col,
+            shortfall_col,
+        )
         if not all(col in headers for col in required):
             return
 
         barcode_idx = headers.index(barcode_col)
         lot_idx = headers.index(lot_col)
+        expiry_idx = headers.index(expiry_col)
         remaining_idx = headers.index(remaining_col)
         excess_idx = headers.index(excess_col)
         shortfall_idx = headers.index(shortfall_col)
@@ -387,7 +445,12 @@ def _update_variance(
         for i, row in enumerate(values[1:], start=2):
             row_barcode = row[barcode_idx].strip() if barcode_idx < len(row) else ""
             row_lot = row[lot_idx].strip() if lot_idx < len(row) else ""
-            if row_barcode == barcode.strip() and row_lot == str(lot).strip():
+            row_expiry = row[expiry_idx].strip() if expiry_idx < len(row) else ""
+            if (
+                row_barcode == barcode.strip()
+                and row_lot == str(lot).strip()
+                and row_expiry == str(expiry).strip()
+            ):
                 row_number = i
                 row_values = row
         if row_number is None:
@@ -448,7 +511,7 @@ def append_count(
         warehouse_qty if warehouse_qty is not None else "",
         NEW_LOT_FLAG if is_new_lot else "",
     ]
-    existing_row_number = _find_row_number(ws, barcode, lot)
+    existing_row_number = _find_row_number(ws, barcode, lot, expiry)
     if existing_row_number is not None:
         ws.update(
             [row],
@@ -459,7 +522,7 @@ def append_count(
         ws.append_row(row, value_input_option="USER_ENTERED")
     load_recent_counts.clear()
     load_all_counts.clear()
-    _update_variance(barcode, lot, front_qty, warehouse_qty)
+    _update_variance(barcode, lot, expiry, front_qty, warehouse_qty)
 
 
 @st.cache_data(ttl=30, show_spinner=False)

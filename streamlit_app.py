@@ -201,8 +201,11 @@ if matches is not None and not matches.empty:
 
     actual_barcode = str(selected_row[barcode_col])
     lot_value = str(selected_row[lot_col])
+    expiry_value = str(selected_row[expiry_col])
     try:
-        existing = find_latest_count(load_all_counts(), actual_barcode, lot_value)
+        existing = find_latest_count(
+            load_all_counts(), actual_barcode, lot_value, expiry_value
+        )
     except Exception:  # noqa: BLE001
         existing = None
 
@@ -213,7 +216,7 @@ if matches is not None and not matches.empty:
 
     # คีย์ของ widget ต้องผูกกับบาร์โค้ด+ล็อต เพื่อให้ค่าที่กรอกไม่ตกค้าง
     # ข้ามไปยังยาตัวถัดไปเมื่อสแกนรายการใหม่โดยยังไม่ได้บันทึก
-    item_key = f"{actual_barcode}__{lot_value}"
+    item_key = f"{actual_barcode}__{lot_value}__{expiry_value}"
 
     col1, col2 = st.columns(2)
     with col1:
@@ -325,13 +328,16 @@ with st.expander("🕘 ประวัติการนับล่าสุด
 
 
 def _status_options(df):
-    # ยาตัวเดียวกันอาจมีหลายล็อต บางล็อตนับแล้วบางล็อตยังไม่นับ ต้องใส่เลขล็อต
-    # กำกับไว้เสมอ ไม่งั้นจะดูเหมือนยาที่นับไปแล้วโผล่มาซ้ำในลิสต์ยังไม่ได้นับ
+    # ยาตัวเดียวกันอาจมีหลายล็อต บางล็อตนับแล้วบางล็อตยังไม่นับ และเลขล็อต
+    # เดียวกันก็อาจมีคนละวันหมดอายุ (คนละล็อตทางกายภาพ) ต้องใส่ทั้งเลขล็อต
+    # และวันหมดอายุกำกับไว้เสมอ ไม่งั้นจะดูเหมือนยาที่นับไปแล้วโผล่มาซ้ำ
     name_col = MASTER_COLUMNS["name"]
     unit_col = MASTER_COLUMNS["unit"]
     lot_col = MASTER_COLUMNS["lot"]
+    expiry_col = MASTER_COLUMNS["expiry"]
     return [
-        f"{row[name_col]} — {row[unit_col]} (ล็อต {row[lot_col]})"
+        f"{row[name_col]} — {row[unit_col]} "
+        f"(ล็อต {row[lot_col]} หมดอายุ {row[expiry_col]})"
         for _, row in df.iterrows()
     ]
 
@@ -366,8 +372,11 @@ try:
             name_col = MASTER_COLUMNS["name"]
             unit_col = MASTER_COLUMNS["unit"]
             lot_col = MASTER_COLUMNS["lot"]
+            expiry_col = MASTER_COLUMNS["expiry"]
             st.dataframe(
-                completed[[name_col, unit_col, lot_col]].reset_index(drop=True),
+                completed[[name_col, unit_col, lot_col, expiry_col]].reset_index(
+                    drop=True
+                ),
                 width="stretch",
                 hide_index=True,
             )
