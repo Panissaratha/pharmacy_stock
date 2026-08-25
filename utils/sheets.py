@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import datetime as dt
+from zoneinfo import ZoneInfo
 
 import gspread
 import pandas as pd
 import streamlit as st
 from google.oauth2.service_account import Credentials
+
+# เซิร์ฟเวอร์ที่ deploy (เช่น Streamlit Cloud) มักตั้งเวลาเป็น UTC ไม่ใช่เวลาไทย
+# ต้องระบุ timezone ตรงๆ ตอนบันทึกเวลา ไม่งั้นเวลาใน CountLog จะเพี้ยนไป 7 ชั่วโมง
+THAILAND_TZ = ZoneInfo("Asia/Bangkok")
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -499,7 +504,7 @@ def append_count(
     ss = _get_spreadsheet()
     ws = _ensure_log_worksheet(ss)
     row = [
-        dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        dt.datetime.now(THAILAND_TZ).strftime("%Y-%m-%d %H:%M:%S"),
         user,
         barcode,
         product_code,
