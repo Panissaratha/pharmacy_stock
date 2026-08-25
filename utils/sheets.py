@@ -382,10 +382,13 @@ def find_latest_count(df: pd.DataFrame, barcode: str, lot: str, expiry: str) -> 
     }
 
 
-def _find_row_number(ws, barcode: str, lot: str, expiry: str) -> int | None:
-    """Return the 1-based sheet row number of the last matching entry, if any."""
+def _find_existing_row(
+    ws, barcode: str, lot: str, expiry: str
+) -> tuple[int, dict] | tuple[None, None]:
+    """Return the (1-based sheet row number, record) of the last matching
+    entry, if any."""
     records = _get_all_records_as_str(ws)
-    row_number = None
+    row_number, matched_record = None, None
     for i, record in enumerate(records):
         if (
             str(record.get("บาร์โค้ด", "")).strip() == barcode.strip()
@@ -393,7 +396,8 @@ def _find_row_number(ws, barcode: str, lot: str, expiry: str) -> int | None:
             and str(record.get("วันหมดอายุ", "")).strip() == str(expiry).strip()
         ):
             row_number = i + 2  # +1 for the header row, +1 for 1-based indexing
-    return row_number
+            matched_record = record
+    return row_number, matched_record
 
 
 def _update_variance(
@@ -488,6 +492,15 @@ def _update_variance(
         pass
 
 
+def _force_text(value: str) -> str:
+    """Prefix a leading apostrophe so Sheets (value_input_option=USER_ENTERED)
+    stores this as literal text instead of numericising it — otherwise a lot
+    like "00" is silently written as the number 0, which then breaks the
+    barcode+lot+expiry match _find_row_number relies on to update (instead of
+    duplicating) an existing CountLog row."""
+    return f"'{value}"
+
+
 def append_count(
     *,
     user: str,
@@ -503,20 +516,24 @@ def append_count(
 ) -> None:
     ss = _get_spreadsheet()
     ws = _ensure_log_worksheet(ss)
+    existing_row_number, existing_record = _find_existing_row(ws, barcode, lot, expiry)
+    # เมื่อเคยถูกทำเครื่องหมายว่าเป็นล็อตใหม่ไว้แล้ว (จากตอนกด "บันทึกล็อตใหม่")
+    # ต้องคงเครื่องหมายนี้ไว้ตอนบันทึกจำนวนนับทับ row เดิมด้วย ไม่งั้นค่า is_new_lot
+    # เริ่มต้น False ของการบันทึกจำนวนนับตามปกติจะเขียนทับจนเครื่องหมายหายไป
+    was_new_lot = bool(existing_record and existing_record.get(NEW_LOT_FLAG, "").strip())
     row = [
         dt.datetime.now(THAILAND_TZ).strftime("%Y-%m-%d %H:%M:%S"),
         user,
-        barcode,
-        product_code,
+        _force_text(barcode),
+        _force_text(product_code),
         name,
         unit,
-        lot,
+        _force_text(lot),
         expiry,
         front_qty if front_qty is not None else "",
         warehouse_qty if warehouse_qty is not None else "",
-        NEW_LOT_FLAG if is_new_lot else "",
+        NEW_LOT_FLAG if (is_new_lot or was_new_lot) else "",
     ]
-    existing_row_number = _find_row_number(ws, barcode, lot, expiry)
     if existing_row_number is not None:
         ws.update(
             [row],
