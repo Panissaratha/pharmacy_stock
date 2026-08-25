@@ -193,8 +193,8 @@ if matches is not None and not matches.empty:
         remaining_value = selected_row.get(remaining_col, "")
         excess_value = selected_row.get(excess_col, "")
         shortfall_value = selected_row.get(shortfall_col, "")
-        st.write(f"คงเหลือ: **{remaining_value if remaining_value else '-'}**")
         st.write(
+            f"คงเหลือ: **{remaining_value if remaining_value else '-'}**  |  "
             f"เกิน: **{excess_value if excess_value else '-'}**  |  "
             f"ขาด: **{shortfall_value if shortfall_value else '-'}**"
         )
