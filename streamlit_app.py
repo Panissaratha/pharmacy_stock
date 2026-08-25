@@ -6,6 +6,7 @@ import streamlit as st
 
 from utils import auth
 from utils.barcode_scanner import barcode_camera_scanner
+from utils.qty_keypad import qty_keypad
 from utils.sheets import (
     MASTER_COLUMNS,
     REMAINING_STOCK_VIEWERS,
@@ -248,50 +249,28 @@ if matches is not None and not matches.empty:
     # ข้ามไปยังยาตัวถัดไปเมื่อสแกนรายการใหม่โดยยังไม่ได้บันทึก
     item_key = f"{actual_barcode}__{lot_value}__{expiry_value}"
 
+    # ใช้ปุ่มกดตัวเลขในหน้าเว็บเอง แทนช่องกรอกตัวเลขปกติ เพราะเมื่อโทรศัพท์เชื่อมต่อ
+    # เครื่องสแกนบาร์โค้ดผ่าน Bluetooth (ซึ่งเครื่องสแกนทำตัวเป็นคีย์บอร์ด Bluetooth)
+    # ระบบปฏิบัติการจะซ่อนคีย์บอร์ดบนจอไปเองเสมอเวลาแตะช่องกรอก — เป็นพฤติกรรมที่
+    # ระบบปฏิบัติการกำหนดเอง ไม่มีทางบังคับให้คีย์บอร์ดบนจอโผล่ขึ้นมาด้วยโค้ดหน้าเว็บได้
+    # การใช้ปุ่มกดของเราเองจึงเป็นทางเดียวที่ทำงานได้แน่นอนทุกอุปกรณ์
+    auto_open_front = st.session_state.get("_qty_focused_for") != item_key
+    if auto_open_front:
+        st.session_state["_qty_focused_for"] = item_key
+
     col1, col2 = st.columns(2)
     with col1:
-        front_qty = st.number_input(
-            "จำนวนนับ (หน้าร้าน)",
-            min_value=0,
-            step=1,
-            value=existing["front_qty"] if existing else None,
-            placeholder="ยังไม่ได้นับ",
+        front_qty = qty_keypad(
+            label="จำนวนนับ (หน้าร้าน)",
             key=f"front_qty_{item_key}",
+            initial_value=existing["front_qty"] if existing else None,
+            auto_open=auto_open_front,
         )
     with col2:
-        warehouse_qty = st.number_input(
-            "จำนวนนับ (โกดัง)",
-            min_value=0,
-            step=1,
-            value=existing["warehouse_qty"] if existing else None,
-            placeholder="ยังไม่ได้นับ",
+        warehouse_qty = qty_keypad(
+            label="จำนวนนับ (โกดัง)",
             key=f"warehouse_qty_{item_key}",
-        )
-
-    # เด้งคีย์บอร์ดโทรศัพท์ขึ้นทันทีที่เห็นช่องจำนวนนับของยาตัวนี้ครั้งแรก (ใช้
-    # เครื่องสแกนแยกยิงบาร์โค้ด แล้วต้องพิมพ์จำนวนนับเองบนจอสัมผัส) — ทำครั้งเดียว
-    # ต่อ 1 ล็อต ไม่งั้นจะแย่งโฟกัสจากช่องโกดังกลับไปช่องหน้าร้านทุกครั้งที่ rerun
-    if st.session_state.get("_qty_focused_for") != item_key:
-        st.session_state["_qty_focused_for"] = item_key
-        st.html(
-            """
-            <script>
-            (function () {
-              let attempts = 0;
-              function tryFocus() {
-                const el = document.querySelector('input[aria-label="จำนวนนับ (หน้าร้าน)"]');
-                if (el) {
-                  el.focus();
-                } else if (attempts < 30) {
-                  attempts += 1;
-                  setTimeout(tryFocus, 100);
-                }
-              }
-              tryFocus();
-            })();
-            </script>
-            """,
-            unsafe_allow_javascript=True,
+            initial_value=existing["warehouse_qty"] if existing else None,
         )
 
     not_ready = front_qty is None and warehouse_qty is None
