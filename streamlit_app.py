@@ -149,53 +149,6 @@ st.html(
     unsafe_allow_javascript=True,
 )
 
-# ทำให้ตัวเลือกล็อตที่นับไปแล้ว (หน้าร้าน/โกดัง/2 ที่) ในช่อง
-# "เลือกเลขล็อต / วันหมดอายุ" ขึ้นสีฟ้า
-# ตัวเลือก dropdown ของ Streamlit เป็น <div role="option"> ธรรมดา ไม่ใช่ <option>
-# ของ native select จึงปรับสีได้ แต่ list จะถูกสร้างใหม่ทุกครั้งที่เปิด dropdown
-# เลยต้องใช้ MutationObserver คอยจับแล้วค่อยใส่สี — ติดตั้ง observer แค่ครั้งเดียว
-# (เช็คธงกันไว้) ไม่งั้นจะซ้อนกันหลาย observer ทุกรอบที่หน้าเว็บ rerun
-st.html(
-    """
-    <script>
-    (function () {
-      if (window.__phLotOptionColorInstalled) return;
-      window.__phLotOptionColorInstalled = true;
-
-      const COUNTED_SUFFIXES = ['หน้าร้านนับแล้ว', 'โกดังนับแล้ว', 'นับ 2 ที่แล้ว'];
-
-      function colorIfCounted(el) {
-        if (
-          el.getAttribute &&
-          el.getAttribute('role') === 'option' &&
-          el.innerText &&
-          COUNTED_SUFFIXES.some((s) => el.innerText.includes(s))
-        ) {
-          el.style.color = '#0d6efd';
-          el.style.fontWeight = '600';
-        }
-      }
-
-      const observer = new MutationObserver((mutations) => {
-        for (const m of mutations) {
-          m.addedNodes.forEach((node) => {
-            if (node.nodeType !== 1) return;
-            colorIfCounted(node);
-            if (node.querySelectorAll) {
-              node.querySelectorAll('[role="option"]').forEach(colorIfCounted);
-            }
-          });
-        }
-      });
-      observer.observe(document.body, { childList: true, subtree: true });
-
-      document.querySelectorAll('[role="option"]').forEach(colorIfCounted);
-    })();
-    </script>
-    """,
-    unsafe_allow_javascript=True,
-)
-
 # --- ขั้นตอนที่ 2: แสดงข้อมูลยา และกรอกจำนวนนับ ---
 matches = st.session_state.matches
 if matches is not None and not matches.empty:
@@ -313,6 +266,32 @@ if matches is not None and not matches.empty:
             value=existing["warehouse_qty"] if existing else None,
             placeholder="ยังไม่ได้นับ",
             key=f"warehouse_qty_{item_key}",
+        )
+
+    # เด้งคีย์บอร์ดโทรศัพท์ขึ้นทันทีที่เห็นช่องจำนวนนับของยาตัวนี้ครั้งแรก (ใช้
+    # เครื่องสแกนแยกยิงบาร์โค้ด แล้วต้องพิมพ์จำนวนนับเองบนจอสัมผัส) — ทำครั้งเดียว
+    # ต่อ 1 ล็อต ไม่งั้นจะแย่งโฟกัสจากช่องโกดังกลับไปช่องหน้าร้านทุกครั้งที่ rerun
+    if st.session_state.get("_qty_focused_for") != item_key:
+        st.session_state["_qty_focused_for"] = item_key
+        st.html(
+            """
+            <script>
+            (function () {
+              let attempts = 0;
+              function tryFocus() {
+                const el = document.querySelector('input[aria-label="จำนวนนับ (หน้าร้าน)"]');
+                if (el) {
+                  el.focus();
+                } else if (attempts < 30) {
+                  attempts += 1;
+                  setTimeout(tryFocus, 100);
+                }
+              }
+              tryFocus();
+            })();
+            </script>
+            """,
+            unsafe_allow_javascript=True,
         )
 
     not_ready = front_qty is None and warehouse_qty is None
