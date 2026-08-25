@@ -34,6 +34,7 @@ _HTML = """
     font-family: var(--st-font, inherit);
     font-size: var(--st-base-font-size, 1rem);
     cursor: pointer;
+    touch-action: manipulation;
   }
   .qk-display.qk-placeholder { color: var(--st-gray-color, #808495); }
   .qk-keypad {
@@ -57,6 +58,7 @@ _HTML = """
     background: var(--st-background-color, #ffffff);
     color: var(--st-text-color, #31333f);
     cursor: pointer;
+    touch-action: manipulation;
   }
   .qk-key:active { background: var(--st-secondary-background-color, #f0f2f6); }
   .qk-key-done {
@@ -144,30 +146,46 @@ export default function (component) {
     render()
   }
 
-  displayBtn.onclick = () => setOpen(!isOpen)
+  // iOS Safari บางเวอร์ชันไม่ยิง "click" ให้กับ element ที่ผูก handler ผ่าน JS
+  // หลัง mount แบบ dynamic (โดยเฉพาะใน Shadow DOM) อย่างน่าเชื่อถือ — ผูกทั้ง
+  // touchend (ยิงทันทีตอนแตะ ไม่มีดีเลย์ ~300ms) และ click (สำหรับเมาส์/เดสก์ท็อป)
+  // พร้อมกันไว้กันไว้สองชั้น แล้วกันไม่ให้ยิงซ้ำสองครั้งเมื่อ touchend ทำงานแล้ว
+  function bindTap(el, handler) {
+    if (!el) return
+    let firedByTouch = false
+    el.addEventListener(
+      "touchend",
+      (e) => {
+        firedByTouch = true
+        e.preventDefault()
+        handler()
+        setTimeout(() => {
+          firedByTouch = false
+        }, 500)
+      },
+      { passive: false }
+    )
+    el.addEventListener("click", () => {
+      if (firedByTouch) return
+      handler()
+    })
+  }
+
+  bindTap(displayBtn, () => setOpen(!isOpen))
 
   parentElement.querySelectorAll(".qk-key[data-d]").forEach((btn) => {
-    btn.onclick = () => {
+    bindTap(btn, () => {
       const d = btn.getAttribute("data-d")
       if (buffer.length >= 6) return
       setValueStayOpen(buffer === "0" ? d : buffer + d)
-    }
+    })
   })
 
-  const clearBtn = parentElement.querySelector("#qk-clear")
-  if (clearBtn) {
-    clearBtn.onclick = () => setValueStayOpen("")
-  }
-
-  const backBtn = parentElement.querySelector("#qk-back")
-  if (backBtn) {
-    backBtn.onclick = () => setValueStayOpen(buffer.slice(0, -1))
-  }
-
-  const doneBtn = parentElement.querySelector("#qk-done")
-  if (doneBtn) {
-    doneBtn.onclick = () => setOpen(false)
-  }
+  bindTap(parentElement.querySelector("#qk-clear"), () => setValueStayOpen(""))
+  bindTap(parentElement.querySelector("#qk-back"), () =>
+    setValueStayOpen(buffer.slice(0, -1))
+  )
+  bindTap(parentElement.querySelector("#qk-done"), () => setOpen(false))
 
   if (data && data.autoOpen && !isOpen) {
     setOpen(true)
