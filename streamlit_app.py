@@ -149,6 +149,53 @@ st.html(
     unsafe_allow_javascript=True,
 )
 
+# ทำให้ตัวเลือกล็อตที่นับไปแล้ว (หน้าร้าน/โกดัง/2 ที่) ในช่อง
+# "เลือกเลขล็อต / วันหมดอายุ" ขึ้นสีฟ้า
+# ตัวเลือก dropdown ของ Streamlit เป็น <div role="option"> ธรรมดา ไม่ใช่ <option>
+# ของ native select จึงปรับสีได้ แต่ list จะถูกสร้างใหม่ทุกครั้งที่เปิด dropdown
+# เลยต้องใช้ MutationObserver คอยจับแล้วค่อยใส่สี — ติดตั้ง observer แค่ครั้งเดียว
+# (เช็คธงกันไว้) ไม่งั้นจะซ้อนกันหลาย observer ทุกรอบที่หน้าเว็บ rerun
+st.html(
+    """
+    <script>
+    (function () {
+      if (window.__phLotOptionColorInstalled) return;
+      window.__phLotOptionColorInstalled = true;
+
+      const COUNTED_SUFFIXES = ['หน้าร้านนับแล้ว', 'โกดังนับแล้ว', 'นับ 2 ที่แล้ว'];
+
+      function colorIfCounted(el) {
+        if (
+          el.getAttribute &&
+          el.getAttribute('role') === 'option' &&
+          el.innerText &&
+          COUNTED_SUFFIXES.some((s) => el.innerText.includes(s))
+        ) {
+          el.style.color = '#0d6efd';
+          el.style.fontWeight = '600';
+        }
+      }
+
+      const observer = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          m.addedNodes.forEach((node) => {
+            if (node.nodeType !== 1) return;
+            colorIfCounted(node);
+            if (node.querySelectorAll) {
+              node.querySelectorAll('[role="option"]').forEach(colorIfCounted);
+            }
+          });
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+
+      document.querySelectorAll('[role="option"]').forEach(colorIfCounted);
+    })();
+    </script>
+    """,
+    unsafe_allow_javascript=True,
+)
+
 # --- ขั้นตอนที่ 2: แสดงข้อมูลยา และกรอกจำนวนนับ ---
 matches = st.session_state.matches
 if matches is not None and not matches.empty:
@@ -170,10 +217,40 @@ if matches is not None and not matches.empty:
 
     if len(matches) > 1:
         st.error("มีหลายล็อต เลือกล็อตก่อนนับ")
-        options = [
-            f"ล็อต {row[lot_col]} — หมดอายุ {row[expiry_col]}"
-            for _, row in matches.iterrows()
-        ]
+
+        try:
+            _counts_for_labels = load_all_counts()
+        except Exception:  # noqa: BLE001
+            _counts_for_labels = None
+
+        def _lot_label(row) -> str:
+            label = f"ล็อต {row[lot_col]} — หมดอายุ {row[expiry_col]}"
+            if _counts_for_labels is None:
+                return label
+            try:
+                status = find_latest_count(
+                    _counts_for_labels,
+                    str(row[barcode_col]),
+                    str(row[lot_col]),
+                    str(row[expiry_col]),
+                )
+            except Exception:  # noqa: BLE001
+                status = None
+            if status is None:
+                return label
+            front_done = status["front_qty"] is not None
+            warehouse_done = status["warehouse_qty"] is not None
+            if front_done and warehouse_done:
+                suffix = "นับ 2 ที่แล้ว"
+            elif front_done:
+                suffix = "หน้าร้านนับแล้ว"
+            elif warehouse_done:
+                suffix = "โกดังนับแล้ว"
+            else:
+                return label
+            return f"{label} - {suffix}"
+
+        options = [_lot_label(row) for _, row in matches.iterrows()]
         selected = st.selectbox("เลือกเลขล็อต / วันหมดอายุ", options)
         selected_row = matches.iloc[options.index(selected)]
     else:
@@ -255,7 +332,10 @@ if matches is not None and not matches.empty:
                 warehouse_qty=warehouse_qty,
             )
             st.success("บันทึกสำเร็จ")
-            st.session_state.matches = None
+            # ถ้ายามีหลายล็อต ให้ค้างอยู่ที่ตัวเดิมเพื่อเลือกล็อตถัดไปจาก
+            # dropdown ต่อได้เลย ไม่ต้องค้นหาชื่อยาใหม่อีกรอบ
+            if len(matches) <= 1:
+                st.session_state.matches = None
             st.session_state.pop("name_search_select", None)
             st.rerun()
         except Exception as e:  # noqa: BLE001
