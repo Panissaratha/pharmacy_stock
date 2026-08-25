@@ -327,19 +327,19 @@ with st.expander("🕘 ประวัติการนับล่าสุด
         st.caption(f"โหลดประวัติไม่สำเร็จ: {e}")
 
 
-def _status_options(df):
+def _status_table(df) -> None:
     # ยาตัวเดียวกันอาจมีหลายล็อต บางล็อตนับแล้วบางล็อตยังไม่นับ และเลขล็อต
-    # เดียวกันก็อาจมีคนละวันหมดอายุ (คนละล็อตทางกายภาพ) ต้องใส่ทั้งเลขล็อต
-    # และวันหมดอายุกำกับไว้เสมอ ไม่งั้นจะดูเหมือนยาที่นับไปแล้วโผล่มาซ้ำ
+    # เดียวกันก็อาจมีคนละวันหมดอายุ (คนละล็อตทางกายภาพ) ต้องโชว์ทั้งเลขล็อต
+    # และวันหมดอายุเสมอ ไม่งั้นจะดูเหมือนยาที่นับไปแล้วโผล่มาซ้ำ
     name_col = MASTER_COLUMNS["name"]
     unit_col = MASTER_COLUMNS["unit"]
     lot_col = MASTER_COLUMNS["lot"]
     expiry_col = MASTER_COLUMNS["expiry"]
-    return [
-        f"{row[name_col]} — {row[unit_col]} "
-        f"(ล็อต {row[lot_col]} หมดอายุ {row[expiry_col]})"
-        for _, row in df.iterrows()
-    ]
+    st.dataframe(
+        df[[name_col, unit_col, lot_col, expiry_col]].reset_index(drop=True),
+        width="stretch",
+        hide_index=True,
+    )
 
 
 try:
@@ -347,21 +347,17 @@ try:
 
     with st.expander("📋 ยาที่ยังไม่ได้นับ"):
 
-        def _uncounted_dropdown(label: str, location: str) -> None:
+        def _uncounted_table(label: str, location: str) -> None:
             items = find_uncounted(master_df, _counts_for_status, location=location)
-            options = _status_options(items)
-            st.selectbox(
-                f"{label} ({len(options)} รายการ)",
-                options=options,
-                index=None,
-                placeholder="ไม่มีรายการค้างนับ 🎉" if not options else "เลือกดูรายการ...",
-                disabled=not options,
-                key=f"uncounted_{location}_select",
-            )
+            st.caption(f"{label} ({len(items)} รายการ)")
+            if items.empty:
+                st.caption("ไม่มีรายการค้างนับ 🎉")
+            else:
+                _status_table(items)
 
-        _uncounted_dropdown("ยังไม่ได้นับทั้ง 2 ที่", "both")
-        _uncounted_dropdown("ยังไม่ได้นับหน้าร้าน", "front")
-        _uncounted_dropdown("ยังไม่ได้นับในโกดัง", "warehouse")
+        _uncounted_table("ยังไม่ได้นับทั้ง 2 ที่", "both")
+        _uncounted_table("ยังไม่ได้นับหน้าร้าน", "front")
+        _uncounted_table("ยังไม่ได้นับในโกดัง", "warehouse")
 
     with st.expander("✅ ยาที่นับเสร็จแล้วทั้ง 2 ที่"):
         completed = find_fully_counted(master_df, _counts_for_status)
@@ -369,17 +365,7 @@ try:
         if completed.empty:
             st.caption("ยังไม่มีรายการที่นับครบ")
         else:
-            name_col = MASTER_COLUMNS["name"]
-            unit_col = MASTER_COLUMNS["unit"]
-            lot_col = MASTER_COLUMNS["lot"]
-            expiry_col = MASTER_COLUMNS["expiry"]
-            st.dataframe(
-                completed[[name_col, unit_col, lot_col, expiry_col]].reset_index(
-                    drop=True
-                ),
-                width="stretch",
-                hide_index=True,
-            )
+            _status_table(completed)
 except SheetNotConfiguredError:
     pass
 except Exception as e:  # noqa: BLE001
