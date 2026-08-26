@@ -324,6 +324,16 @@ if matches is not None and not matches.empty:
         new_lot_key = f"new_lot_input_{actual_barcode}"
         new_expiry_key = f"new_expiry_input_{actual_barcode}"
         new_lot = st.text_input("เลขที่ล็อต", key=new_lot_key)
+
+        def _convert_be_year_in_place() -> None:
+            # แก้ไข session_state ของ widget ต้องทำใน callback (ก่อนสคริปต์รันรอบ
+            # ถัดไป) เท่านั้น — ถ้าไปแก้หลังจากสร้าง widget แล้วในสคริปต์เดียวกัน
+            # Streamlit จะโยน StreamlitAPIException ทันที
+            val = st.session_state.get(new_expiry_key)
+            # ปี พ.ศ. ของปีปัจจุบันคือ 2569 เป็นต้นไป จึงใช้ 2569 เป็นเกณฑ์แยก
+            if val is not None and val.year >= 2569:
+                st.session_state[new_expiry_key] = val.replace(year=val.year - 543)
+
         new_expiry = st.date_input(
             "วันหมดอายุ",
             value=None,
@@ -332,6 +342,7 @@ if matches is not None and not matches.empty:
             max_value=dt.date(9999, 12, 31),
             format="DD/MM/YYYY",
             key=new_expiry_key,
+            on_change=_convert_be_year_in_place,
         )
 
         # st.rerun() ด้านล่างทำให้ st.success/st.warning หายไปทันทีก่อนทันได้แสดงผล
