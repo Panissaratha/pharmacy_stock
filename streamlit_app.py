@@ -310,6 +310,11 @@ if matches is not None and not matches.empty:
         .st-key-new_lot_expander summary:hover {
           background-color: #ffecb0;
         }
+        /* ไม่ต้องการให้ปฏิทินโผล่ขึ้นมาตอนแตะช่องวันหมดอายุ — ให้พิมพ์ วัน/เดือน/ปี
+           เองในช่องได้เลยเหมือนเดิม แค่ซ่อนป๊อปอัปปฏิทินที่เปิดเองเมื่อโฟกัสช่อง */
+        [data-testid="stDateInputCalendar"] {
+          display: none !important;
+        }
         </style>
         """
     )
@@ -319,31 +324,26 @@ if matches is not None and not matches.empty:
         new_lot_key = f"new_lot_input_{actual_barcode}"
         new_expiry_key = f"new_expiry_input_{actual_barcode}"
         new_lot = st.text_input("เลขที่ล็อต", key=new_lot_key)
-        # ใช้ text_input พิมพ์ตัวเลขเองแทน date_input เพราะไม่ต้องการให้ปฏิทินโผล่ขึ้นมา
-        new_expiry_text = st.text_input(
-            "วันหมดอายุ (วว/ดด/ปปปป)",
+        new_expiry = st.date_input(
+            "วันหมดอายุ",
+            value=None,
+            # เผื่อพิมพ์ปี พ.ศ. เข้ามา (เช่น 2570) ต้องขยายเพดานให้กว้างพอ ไม่งั้น
+            # ช่องจะไม่ยอมรับเลขปีที่เกินเพดานตั้งแต่ต้น
+            max_value=dt.date(9999, 12, 31),
+            format="DD/MM/YYYY",
             key=new_expiry_key,
-            placeholder="เช่น 31/12/2027 (ปี ค.ศ. หรือ พ.ศ. ก็ได้)",
         )
         if st.button("บันทึกล็อตใหม่", key=f"save_new_lot_{actual_barcode}"):
-            new_expiry_date = None
-            if new_expiry_text.strip():
-                try:
-                    new_expiry_date = dt.datetime.strptime(
-                        new_expiry_text.strip(), "%d/%m/%Y"
-                    ).date()
-                    # ถ้ากรอกปี พ.ศ. มา (เช่น 2570) ให้แปลงเป็น ค.ศ. ให้อัตโนมัติ —
-                    # ปี พ.ศ. ของปีปัจจุบันคือ 2569 เป็นต้นไป จึงใช้ 2569 เป็นเกณฑ์แยก
-                    if new_expiry_date.year >= 2569:
-                        new_expiry_date = new_expiry_date.replace(
-                            year=new_expiry_date.year - 543
-                        )
-                except ValueError:
-                    new_expiry_date = None
+            new_expiry_date = new_expiry
+            if new_expiry_date is not None:
+                # ถ้ากรอกปี พ.ศ. มา (เช่น 2570) ให้แปลงเป็น ค.ศ. ให้อัตโนมัติ —
+                # ปี พ.ศ. ของปีปัจจุบันคือ 2569 เป็นต้นไป จึงใช้ 2569 เป็นเกณฑ์แยก
+                if new_expiry_date.year >= 2569:
+                    new_expiry_date = new_expiry_date.replace(
+                        year=new_expiry_date.year - 543
+                    )
             if not new_lot.strip() or new_expiry_date is None:
-                st.error(
-                    "กรุณากรอกเลขล็อตและวันหมดอายุให้ถูกต้อง (รูปแบบ วว/ดด/ปปปป)"
-                )
+                st.error("กรุณากรอกเลขล็อตและวันหมดอายุให้ครบ")
             else:
                 try:
                     append_count(
