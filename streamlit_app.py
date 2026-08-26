@@ -268,31 +268,6 @@ if matches is not None and not matches.empty:
             key=f"warehouse_qty_{item_key}",
         )
 
-    # เด้งคีย์บอร์ดโทรศัพท์ขึ้นทันทีที่เห็นช่องจำนวนนับของยาตัวนี้ครั้งแรก — ทำครั้งเดียว
-    # ต่อ 1 ล็อต ไม่งั้นจะแย่งโฟกัสจากช่องโกดังกลับไปช่องหน้าร้านทุกครั้งที่ rerun
-    if st.session_state.get("_qty_focused_for") != item_key:
-        st.session_state["_qty_focused_for"] = item_key
-        st.html(
-            """
-            <script>
-            (function () {
-              let attempts = 0;
-              function tryFocus() {
-                const el = document.querySelector('input[aria-label="จำนวนนับ (หน้าร้าน)"]');
-                if (el) {
-                  el.focus();
-                } else if (attempts < 30) {
-                  attempts += 1;
-                  setTimeout(tryFocus, 100);
-                }
-              }
-              tryFocus();
-            })();
-            </script>
-            """,
-            unsafe_allow_javascript=True,
-        )
-
     # st.rerun() ด้านล่างทำให้ st.success หายไปทันทีก่อนทันได้แสดงผล จึงต้องจำไว้ใน
     # session_state แล้วมาแสดงตรงนี้ใน run ถัดไปแทน — วางต่อจากช่องกรอกจำนวนนับ
     if st.session_state.pop("_just_saved", False):

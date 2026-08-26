@@ -48,6 +48,7 @@ LOG_COLUMNS = [
 ]
 
 NEW_LOT_FLAG = "ถูกเพิ่มใหม่"
+EXISTING_LOT_FLAG = "ล็อตในระบบ"
 
 
 class SheetNotConfiguredError(RuntimeError):
@@ -519,8 +520,12 @@ def append_count(
     existing_row_number, existing_record = _find_existing_row(ws, barcode, lot, expiry)
     # เมื่อเคยถูกทำเครื่องหมายว่าเป็นล็อตใหม่ไว้แล้ว (จากตอนกด "บันทึกล็อตใหม่")
     # ต้องคงเครื่องหมายนี้ไว้ตอนบันทึกจำนวนนับทับ row เดิมด้วย ไม่งั้นค่า is_new_lot
-    # เริ่มต้น False ของการบันทึกจำนวนนับตามปกติจะเขียนทับจนเครื่องหมายหายไป
-    was_new_lot = bool(existing_record and existing_record.get(NEW_LOT_FLAG, "").strip())
+    # เริ่มต้น False ของการบันทึกจำนวนนับตามปกติจะเขียนทับจนเครื่องหมายหายไป — เทียบ
+    # เท่ากับ NEW_LOT_FLAG ตรงๆ (ไม่ใช่แค่ truthy) เพราะคอลัมน์นี้อาจมี EXISTING_LOT_FLAG
+    # ("ล็อตในระบบ") ซึ่งก็ไม่ใช่ค่าว่างเหมือนกัน แต่ไม่ได้แปลว่าเป็นล็อตใหม่
+    was_new_lot = bool(
+        existing_record and existing_record.get(NEW_LOT_FLAG, "").strip() == NEW_LOT_FLAG
+    )
     row = [
         dt.datetime.now(THAILAND_TZ).strftime("%Y-%m-%d %H:%M:%S"),
         user,
@@ -532,7 +537,7 @@ def append_count(
         expiry,
         front_qty if front_qty is not None else "",
         warehouse_qty if warehouse_qty is not None else "",
-        NEW_LOT_FLAG if (is_new_lot or was_new_lot) else "",
+        NEW_LOT_FLAG if (is_new_lot or was_new_lot) else EXISTING_LOT_FLAG,
     ]
     if existing_row_number is not None:
         ws.update(
