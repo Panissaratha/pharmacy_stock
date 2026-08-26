@@ -163,6 +163,7 @@ if matches is not None and not matches.empty:
 
     # รวมล็อตที่เคย "เพิ่มล็อตใหม่" ไว้ใน CountLog เข้ากับล็อตจาก MasterData
     # เพื่อให้เลือกล็อตที่เพิ่มเองก่อนหน้านี้ได้จาก dropdown เดียวกันเลย
+    original_lot_count = len(matches)
     matches = with_extra_lots(matches)
 
     st.subheader(f"ชื่อยา: {matches.iloc[0][name_col]}")
@@ -176,34 +177,37 @@ if matches is not None and not matches.empty:
         except Exception:  # noqa: BLE001
             _counts_for_labels = None
 
-        def _lot_label(row) -> str:
+        def _lot_label(position, row) -> str:
             label = f"ล็อต {row[lot_col]} — หมดอายุ {row[expiry_col]}"
-            if _counts_for_labels is None:
-                return label
-            try:
-                status = find_latest_count(
-                    _counts_for_labels,
-                    str(row[barcode_col]),
-                    str(row[lot_col]),
-                    str(row[expiry_col]),
-                )
-            except Exception:  # noqa: BLE001
-                status = None
-            if status is None:
-                return label
-            front_done = status["front_qty"] is not None
-            warehouse_done = status["warehouse_qty"] is not None
-            if front_done and warehouse_done:
-                suffix = "นับ 2 ที่แล้ว"
-            elif front_done:
-                suffix = "หน้าร้านนับแล้ว"
-            elif warehouse_done:
-                suffix = "โกดังนับแล้ว"
-            else:
-                return label
-            return f"{label} - {suffix}"
+            # with_extra_lots() ต่อล็อตที่ไม่มีใน MasterData (มาจาก "เพิ่มล็อตใหม่"
+            # ใน CountLog) ไว้ท้ายแถวเดิมของ MasterData เสมอ ตำแหน่ง < จำนวนแถวเดิม
+            # จึงแปลว่าล็อตนี้มีอยู่ใน MasterData จริง
+            origin = "ล็อตในระบบ" if position < original_lot_count else "ถูกเพิ่มใหม่"
+            suffixes = [origin]
+            if _counts_for_labels is not None:
+                try:
+                    status = find_latest_count(
+                        _counts_for_labels,
+                        str(row[barcode_col]),
+                        str(row[lot_col]),
+                        str(row[expiry_col]),
+                    )
+                except Exception:  # noqa: BLE001
+                    status = None
+                if status is not None:
+                    front_done = status["front_qty"] is not None
+                    warehouse_done = status["warehouse_qty"] is not None
+                    if front_done and warehouse_done:
+                        suffixes.append("นับ 2 ที่แล้ว")
+                    elif front_done:
+                        suffixes.append("หน้าร้านนับแล้ว")
+                    elif warehouse_done:
+                        suffixes.append("โกดังนับแล้ว")
+            return f"{label} - {' - '.join(suffixes)}"
 
-        options = [_lot_label(row) for _, row in matches.iterrows()]
+        options = [
+            _lot_label(position, row) for position, (_, row) in enumerate(matches.iterrows())
+        ]
         selected = st.selectbox("เลือกเลขล็อต / วันหมดอายุ", options)
         selected_row = matches.iloc[options.index(selected)]
     else:
