@@ -333,6 +333,12 @@ if matches is not None and not matches.empty:
             format="DD/MM/YYYY",
             key=new_expiry_key,
         )
+
+        # st.rerun() ด้านล่างทำให้ st.success หายไปทันทีก่อนทันได้แสดงผล จึงต้องจำไว้ใน
+        # session_state แล้วมาแสดงตรงนี้ใน run ถัดไปแทน — เหนือปุ่มบันทึก
+        if st.session_state.pop("_just_saved_new_lot", False):
+            st.success("บันทึกล็อตใหม่แล้ว")
+
         if st.button("บันทึกล็อตใหม่", key=f"save_new_lot_{actual_barcode}"):
             new_expiry_date = new_expiry
             if new_expiry_date is not None:
@@ -345,25 +351,39 @@ if matches is not None and not matches.empty:
             if not new_lot.strip() or new_expiry_date is None:
                 st.error("กรุณากรอกเลขล็อตและวันหมดอายุให้ครบ")
             else:
-                try:
-                    append_count(
-                        user=user["name"],
-                        barcode=actual_barcode,
-                        product_code=matches.iloc[0][product_code_col],
-                        name=matches.iloc[0][name_col],
-                        unit=matches.iloc[0][unit_col],
-                        lot=new_lot.strip(),
-                        expiry=new_expiry_date.strftime("%d/%m/%Y"),
-                        front_qty=None,
-                        warehouse_qty=None,
-                        is_new_lot=True,
-                    )
-                    st.success("เพิ่มล็อตใหม่แล้ว เลือกได้จาก dropdown ด้านบน")
-                    st.session_state.pop(new_lot_key, None)
-                    st.session_state.pop(new_expiry_key, None)
-                    st.rerun()
-                except Exception as e:  # noqa: BLE001
-                    st.error(f"บันทึกไม่สำเร็จ: {e}")
+                new_expiry_str = new_expiry_date.strftime("%d/%m/%Y")
+
+                def _normalize_lot(value) -> str:
+                    text = str(value).strip()
+                    return str(int(text)) if text.isdigit() else text.lower()
+
+                is_duplicate = any(
+                    _normalize_lot(row[lot_col]) == _normalize_lot(new_lot)
+                    and str(row[expiry_col]).strip() == new_expiry_str
+                    for _, row in matches.iterrows()
+                )
+                if is_duplicate:
+                    st.warning("มีเลขล็อตและวันหมดอายุนี้อยู่แล้ว")
+                else:
+                    try:
+                        append_count(
+                            user=user["name"],
+                            barcode=actual_barcode,
+                            product_code=matches.iloc[0][product_code_col],
+                            name=matches.iloc[0][name_col],
+                            unit=matches.iloc[0][unit_col],
+                            lot=new_lot.strip(),
+                            expiry=new_expiry_str,
+                            front_qty=None,
+                            warehouse_qty=None,
+                            is_new_lot=True,
+                        )
+                        st.session_state["_just_saved_new_lot"] = True
+                        st.session_state.pop(new_lot_key, None)
+                        st.session_state.pop(new_expiry_key, None)
+                        st.rerun()
+                    except Exception as e:  # noqa: BLE001
+                        st.error(f"บันทึกไม่สำเร็จ: {e}")
 
 st.divider()
 with st.expander("🕘 ประวัติการนับล่าสุด"):
