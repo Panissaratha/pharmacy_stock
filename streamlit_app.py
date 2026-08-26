@@ -334,10 +334,12 @@ if matches is not None and not matches.empty:
             key=new_expiry_key,
         )
 
-        # st.rerun() ด้านล่างทำให้ st.success หายไปทันทีก่อนทันได้แสดงผล จึงต้องจำไว้ใน
-        # session_state แล้วมาแสดงตรงนี้ใน run ถัดไปแทน — เหนือปุ่มบันทึก
+        # st.rerun() ด้านล่างทำให้ st.success/st.warning หายไปทันทีก่อนทันได้แสดงผล
+        # จึงต้องจำไว้ใน session_state แล้วมาแสดงตรงนี้ใน run ถัดไปแทน — เหนือปุ่มบันทึก
         if st.session_state.pop("_just_saved_new_lot", False):
             st.success("บันทึกล็อตใหม่แล้ว")
+        if st.session_state.pop("_dup_lot_warning", False):
+            st.warning("มีเลขล็อตและวันหมดอายุนี้อยู่แล้ว")
 
         if st.button("บันทึกล็อตใหม่", key=f"save_new_lot_{actual_barcode}"):
             new_expiry_date = new_expiry
@@ -363,7 +365,8 @@ if matches is not None and not matches.empty:
                     for _, row in matches.iterrows()
                 )
                 if is_duplicate:
-                    st.warning("มีเลขล็อตและวันหมดอายุนี้อยู่แล้ว")
+                    st.session_state["_dup_lot_warning"] = True
+                    st.rerun()
                 else:
                     try:
                         append_count(
