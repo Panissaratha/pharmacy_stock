@@ -149,12 +149,6 @@ st.html(
     unsafe_allow_javascript=True,
 )
 
-# แสดงตรงนี้ (นอกบล็อกขั้นตอนที่ 2) เพราะถ้ายามีล็อตเดียว การบันทึกจะเคลียร์
-# matches เป็น None ทำให้บล็อกขั้นตอนที่ 2 ทั้งหมดไม่ถูกวาดใน run ถัดไป —
-# ข้อความจึงต้องอยู่จุดที่วาดเสมอไม่ว่ากรณีไหน
-if st.session_state.pop("_just_saved", False):
-    st.success("บันทึกแล้ว")
-
 # --- ขั้นตอนที่ 2: แสดงข้อมูลยา และกรอกจำนวนนับ ---
 matches = st.session_state.matches
 if matches is not None and not matches.empty:
@@ -299,6 +293,11 @@ if matches is not None and not matches.empty:
             unsafe_allow_javascript=True,
         )
 
+    # st.rerun() ด้านล่างทำให้ st.success หายไปทันทีก่อนทันได้แสดงผล จึงต้องจำไว้ใน
+    # session_state แล้วมาแสดงตรงนี้ใน run ถัดไปแทน — วางต่อจากช่องกรอกจำนวนนับ
+    if st.session_state.pop("_just_saved", False):
+        st.success("บันทึกแล้ว")
+
     not_ready = front_qty is None and warehouse_qty is None
     if st.button(
         "💾 บันทึกจำนวนนับ", width="stretch", type="primary", disabled=not_ready
@@ -315,15 +314,7 @@ if matches is not None and not matches.empty:
                 front_qty=front_qty,
                 warehouse_qty=warehouse_qty,
             )
-            # st.rerun() ด้านล่างทำให้ st.success ที่เรียกตรงนี้หายไปทันทีก่อนจะทัน
-            # ได้แสดงผล จึงต้องจำไว้ใน session_state แล้วไปแสดงใน run ถัดไปแทน — ไว้
-            # เหนือปุ่มบันทึก (นอก if matches: ด้านบน เพราะถ้าล็อตเดียว matches จะถูก
-            # เคลียร์เป็น None ต่อจากนี้ ทำให้บล็อกนี้ทั้งหมดไม่ถูกวาดใน run ถัดไป)
             st.session_state["_just_saved"] = True
-            # ถ้ายามีหลายล็อต ให้ค้างอยู่ที่ตัวเดิมเพื่อเลือกล็อตถัดไปจาก
-            # dropdown ต่อได้เลย ไม่ต้องค้นหาชื่อยาใหม่อีกรอบ
-            if len(matches) <= 1:
-                st.session_state.matches = None
             st.session_state.pop("name_search_select", None)
             st.rerun()
         except Exception as e:  # noqa: BLE001
